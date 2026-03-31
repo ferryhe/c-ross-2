@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import os
 import pickle
@@ -37,6 +38,21 @@ DEFAULT_MAX_ITERATIONS = int(os.getenv("AGENTIC_MAX_ITERATIONS", "2"))
 DEFAULT_SYNTHESIS_TOP_K = os.getenv("AGENTIC_SYNTHESIS_TOP_K")
 DEFAULT_LANGUAGE = os.getenv("OUTPUT_LANGUAGE", DEFAULT_OUTPUT_LANGUAGE)
 INSUFFICIENT_INFO_RESPONSE = "I don't have enough information to answer this question."
+RULE_NUMBER_PATTERN = re.compile(r"\u89c4\u5219\u7b2c(\d+)\u53f7")
+COUNT_QUERY_MARKERS = (
+    "\u591a\u5c11",
+    "\u51e0",
+    "\u603b\u5171",
+    "\u4e00\u5171",
+    "\u5171\u6709",
+    "\u603b\u6570",
+)
+COUNT_SCOPE_MARKERS = (
+    "\u89c4\u5219",
+    "\u89c4\u5b9a",
+    "\u9644\u4ef6",
+    "\u901a\u77e5",
+)
 
 
 def _resolve_path(value: str | None, default: Path) -> Path:
@@ -50,8 +66,10 @@ def _resolve_path(value: str | None, default: Path) -> Path:
 
 INDEX_PATH = _resolve_path(os.getenv("INDEX_PATH"), PROJECT_ROOT / "knowledge_base.faiss")
 META_PATH = _resolve_path(os.getenv("META_PATH"), PROJECT_ROOT / "knowledge_base.meta.pkl")
+MANIFEST_PATH = _resolve_path(os.getenv("MANIFEST_PATH"), REPO_ROOT / "Knowledge_Base_MarkDown" / "manifest.json")
 _INDEX_CACHE = None
 _DOCS_CACHE = None
+_MANIFEST_CACHE = None
 
 
 def _normalize_path(path: str) -> str:
@@ -212,6 +230,28 @@ def _load_index(path: Path):
         return faiss.deserialize_index(arr)
 
 
+def _load_manifest(refresh: bool = False) -> list[dict[str, Any]]:
+    global _MANIFEST_CACHE
+
+    if refresh or _MANIFEST_CACHE is None:
+        if not MANIFEST_PATH.exists():
+            raise FileNotFoundError(f"Manifest file not found: {MANIFEST_PATH}")
+
+        with MANIFEST_PATH.open("r", encoding="utf-8-sig") as fh:
+            raw = json.load(fh)
+
+        if isinstance(raw, list):
+            entries = raw
+        elif isinstance(raw, dict):
+            entries = raw.get("entries") or raw.get("documents") or raw.get("files") or []
+        else:
+            entries = []
+
+        _MANIFEST_CACHE = [entry for entry in entries if isinstance(entry, dict)]
+
+    return _MANIFEST_CACHE
+
+
 def _load_artifacts(refresh: bool = False):
     global _INDEX_CACHE, _DOCS_CACHE
 
@@ -234,6 +274,10 @@ def refresh_cache():
     _load_artifacts(refresh=True)
 
 
+def refresh_manifest_cache():
+    _load_manifest(refresh=True)
+
+
 def get_document_snippets(doc_path: str, limit: int | None = None):
     """Return FAISS metadata chunks for a specific Markdown path."""
     _, docs = _load_artifacts()
@@ -242,6 +286,92 @@ def get_document_snippets(doc_path: str, limit: int | None = None):
     if limit is not None:
         return matches[:limit]
     return matches
+
+
+def _is_catalog_count_query(question: str) -> bool:
+    normalized = question.replace("\uFF1F", "?").replace(" ", "")
+    return any(marker in normalized for marker in COUNT_QUERY_MARKERS) and any(
+        marker in normalized for marker in COUNT_SCOPE_MARKERS
+    )
+
+
+def _build_manifest_hit(entries: list[dict[str, Any]], summary_lines: list[str]) -> list[dict[str, str]]:
+    snippet_lines = summary_lines[:]
+    for entry in entries:
+        path = entry.get("path", "")
+        title = entry.get("title", "")
+        if path and title:
+            snippet_lines.append(f"- {title} ({path})")
+
+    return [
+        {
+            "path": "Knowledge_Base_MarkDown/manifest.json",
+            "text": "\n".join(snippet_lines),
+            "retrieval_score": 1.0,
+        }
+    ]
+
+
+def _answer_rule_count_question(question: str, *, language: str = DEFAULT_LANGUAGE) -> dict[str, Any] | None:
+    normalized = question.replace(" ", "")
+    if "\u89c4\u5219" not in normalized and "\u89c4\u5b9a" not in normalized:
+        return None
+    if not _is_catalog_count_query(normalized):
+        return None
+
+    entries = _load_manifest()
+    numbered_rules: list[tuple[int, dict[str, Any]]] = []
+    for entry in entries:
+        if entry.get("category") != "rules":
+            continue
+        title = str(entry.get("title", ""))
+        match = RULE_NUMBER_PATTERN.search(title)
+        if match:
+            numbered_rules.append((int(match.group(1)), entry))
+
+    if not numbered_rules:
+        return None
+
+    numbered_rules.sort(key=lambda item: item[0])
+    first_no = numbered_rules[0][0]
+    last_no = numbered_rules[-1][0]
+    count = len(numbered_rules)
+    sample_entries = [numbered_rules[0][1], numbered_rules[-1][1]]
+
+    if language == "zh":
+        answer = (
+            f"\u6839\u636e\u5f53\u524d\u77e5\u8bc6\u5e93\u6e05\u5355\uff0c\u507f\u4e8c\u4ee3\u4e8c\u671f\u76d1\u7ba1\u89c4\u5219\u5171\u6536\u5f55 {count} \u9879\uff0c"
+            f"\u7f16\u53f7\u4ece\u7b2c{first_no}\u53f7\u5230\u7b2c{last_no}\u53f7\u3002"
+            " [1] Knowledge_Base_MarkDown/manifest.json"
+        )
+        summary_lines = [
+            f"\u5f53\u524d manifest \u5171\u6536\u5f55 {count} \u4efd `rules` \u7c7b\u6587\u4ef6\u3002",
+            f"\u89c4\u5219\u7f16\u53f7\u8303\u56f4\uff1a\u7b2c{first_no}\u53f7\u81f3\u7b2c{last_no}\u53f7\u3002",
+        ]
+    else:
+        answer = (
+            f"According to the current knowledge-base manifest, the Phase II solvency rules include {count} numbered rule files, "
+            f"running from Rule {first_no} to Rule {last_no}.[1] Knowledge_Base_MarkDown/manifest.json"
+        )
+        summary_lines = [
+            f"The manifest contains {count} rule files.",
+            f"Rule numbers range from {first_no} to {last_no}.",
+        ]
+
+    return {
+        "mode": "catalog",
+        "answer": answer,
+        "hits": _build_manifest_hit(sample_entries, summary_lines),
+        "sub_queries": [question],
+        "executed_queries": ["manifest:rules:count"],
+        "iterations": 0,
+        "reflection_notes": ["Answered from manifest metadata instead of vector retrieval."],
+        "retrieval_history": [],
+    }
+
+
+def try_answer_catalog_query(question: str, *, language: str = DEFAULT_LANGUAGE) -> dict[str, Any] | None:
+    return _answer_rule_count_question(question, language=language)
 
 
 @retry_with_exponential_backoff(max_retries=3, initial_delay=1.0)
@@ -405,6 +535,10 @@ def run_query(
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> dict[str, Any]:
+    catalog_answer = try_answer_catalog_query(question, language=language)
+    if catalog_answer is not None:
+        return catalog_answer
+
     if mode == "standard":
         return run_standard_query(
             client,
