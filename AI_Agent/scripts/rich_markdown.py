@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-MARKED_JS_URL = "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+MARKED_JS_URL = "https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"
 KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
 KATEX_JS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
 KATEX_AUTORENDER_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
@@ -136,6 +136,52 @@ def build_rich_markdown_html(markdown_text: str) -> str:
         );
       }}
 
+      function sanitizeHtmlTree(root) {{
+        const disallowedTags = new Set([
+          "script",
+          "style",
+          "iframe",
+          "object",
+          "embed",
+          "link",
+          "meta",
+          "base",
+          "form",
+          "input",
+          "button",
+          "textarea",
+          "select",
+          "option"
+        ]);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        const nodesToRemove = [];
+
+        while (walker.nextNode()) {{
+          const element = walker.currentNode;
+          const tagName = element.tagName.toLowerCase();
+          if (disallowedTags.has(tagName)) {{
+            nodesToRemove.push(element);
+            continue;
+          }}
+
+          for (const attribute of Array.from(element.attributes)) {{
+            const name = attribute.name.toLowerCase();
+            const value = attribute.value.trim().toLowerCase();
+            if (name.startsWith("on")) {{
+              element.removeAttribute(attribute.name);
+              continue;
+            }}
+            if ((name === "href" || name === "src" || name === "xlink:href") && value.startsWith("javascript:")) {{
+              element.removeAttribute(attribute.name);
+            }}
+          }}
+        }}
+
+        for (const element of nodesToRemove) {{
+          element.remove();
+        }}
+      }}
+
       function render() {{
         if (!window.marked || !window.renderMathInElement) {{
           window.setTimeout(render, 50);
@@ -144,13 +190,12 @@ def build_rich_markdown_html(markdown_text: str) -> str:
 
         marked.setOptions({{
           gfm: true,
-          breaks: true,
-          headerIds: false,
-          mangle: false
+          breaks: true
         }});
 
         const root = document.getElementById("root");
         root.innerHTML = marked.parse(markdownSource);
+        sanitizeHtmlTree(root);
 
         window.renderMathInElement(root, {{
           throwOnError: false,

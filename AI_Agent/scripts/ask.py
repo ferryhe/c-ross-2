@@ -36,6 +36,7 @@ DEFAULT_SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.0"))
 DEFAULT_MAX_ITERATIONS = int(os.getenv("AGENTIC_MAX_ITERATIONS", "2"))
 DEFAULT_SYNTHESIS_TOP_K = os.getenv("AGENTIC_SYNTHESIS_TOP_K")
 DEFAULT_LANGUAGE = os.getenv("OUTPUT_LANGUAGE", DEFAULT_OUTPUT_LANGUAGE)
+INSUFFICIENT_INFO_RESPONSE = "I don't have enough information to answer this question."
 
 
 def _resolve_path(value: str | None, default: Path) -> Path:
@@ -124,7 +125,7 @@ def _collect_filename_match_hits(
     return direct_hits
 
 
-def get_system_prompt(language: str = "en") -> str:
+def _legacy_get_system_prompt(language: str = "en") -> str:
     """
     Get the system prompt with language-specific instructions.
 
@@ -161,10 +162,6 @@ def get_system_prompt(language: str = "en") -> str:
     return base_prompt
 
 
-# Deprecated: Use get_system_prompt(language) instead for language-specific responses.
-SYSTEM_PROMPT = get_system_prompt(DEFAULT_LANGUAGE)
-
-
 def get_system_prompt(language: str = "en") -> str:
     base_prompt = (
         f"You are the documentation expert for the {KNOWLEDGE_BASE_NAME}. "
@@ -172,7 +169,7 @@ def get_system_prompt(language: str = "en") -> str:
         "1. Answer ONLY using information from the retrieved snippets provided below.\n"
         "2. Every claim must cite evidence using the snippet number and file path in the format `[n] path/to/file.md`.\n"
         "3. Structure answers with a short summary followed by bullet points of supporting evidence.\n"
-        "4. If the snippets do not contain sufficient information to answer the question, reply 'I don't have enough information to answer this question.' and recommend the most relevant Markdown file to inspect.\n"
+        f"4. If the snippets do not contain sufficient information to answer the question, reply '{INSUFFICIENT_INFO_RESPONSE}' and recommend the most relevant Markdown file to inspect.\n"
         "5. NEVER make up information or draw conclusions not directly supported by the snippets.\n"
         "6. If you're uncertain about any detail, explicitly state your uncertainty.\n"
     )
@@ -200,7 +197,7 @@ def format_user_prompt(question: str, context: str, history: str | None = None) 
         + f"You will receive Markdown excerpts from the {KNOWLEDGE_BASE_NAME}. Each excerpt already includes a numeric tag "
         "like [1], [2], etc., plus its file path. Use only these excerpts to answer the question. "
         "When citing information, reuse the same numeric tag and file path so the reader can trace the source. "
-        "If there is no supporting excerpt, say 'Not sure' and mention which Markdown file should be reviewed.\n\n"
+        f"If there is no supporting excerpt, reply '{INSUFFICIENT_INFO_RESPONSE}' and mention which Markdown file should be reviewed.\n\n"
         f"Retrieved snippets:\n{context}\n\nQuestion: {question}"
     )
 
@@ -321,7 +318,7 @@ def answer_from_hits(
     history: str | None = None,
 ) -> str:
     if not hits:
-        return "I don't have enough information to answer this question."
+        return INSUFFICIENT_INFO_RESPONSE
 
     messages = [
         {"role": "system", "content": get_system_prompt(language)},

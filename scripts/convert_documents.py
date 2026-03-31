@@ -62,14 +62,21 @@ def repair_opendataloader_assets(markdown_path: Path, output_dir: Path) -> list[
     if not referenced_dirs or not images_dir.is_dir():
         return []
 
+    if len(referenced_dirs) == 1:
+        target_dir = output_dir / referenced_dirs[0]
+        if target_dir.exists():
+            return []
+        images_dir.rename(target_dir)
+        return [referenced_dirs[0]]
+
     renamed_dirs: list[str] = []
     for directory_name in referenced_dirs:
         target_dir = output_dir / directory_name
         if target_dir.exists():
             continue
-        images_dir.rename(target_dir)
+        shutil.copytree(images_dir, target_dir)
         renamed_dirs.append(directory_name)
-        images_dir = target_dir
+    shutil.rmtree(images_dir)
     return renamed_dirs
 
 

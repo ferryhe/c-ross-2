@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,11 +13,49 @@ MHTML_HTML_ROOT = WORK_ROOT / "mhtml_html"
 RAW_MARKDOWN_ROOT = WORK_ROOT / "converted_raw"
 REPORT_ROOT = WORK_ROOT / "conversion_reports"
 KNOWLEDGE_BASE_ROOT = PROJECT_ROOT / "Knowledge_Base_MarkDown"
-REFERENCE_AI_AGENT_DIR = Path(r"C:\Projects\IAA_AI_Knowledge_Base\AI_Agent")
-REFERENCE_AI_AGENT_ENV = REFERENCE_AI_AGENT_DIR / ".env"
 LOCAL_AI_AGENT_ENV = PROJECT_ROOT / "AI_Agent" / ".env"
-DOC_TO_MD_ROOT = Path(r"C:\Projects\doc_to_md")
-DOC_TO_MD_PYTHON = DOC_TO_MD_ROOT / ".venv" / "Scripts" / "python.exe"
+
+
+def _prefer_existing(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+def _path_from_env(env_name: str, default: Path) -> Path:
+    raw_value = os.getenv(env_name)
+    if not raw_value:
+        return default
+    return Path(raw_value).expanduser()
+
+
+def _default_reference_ai_agent_dir() -> Path:
+    return _prefer_existing(
+        PROJECT_ROOT.parent / "IAA_AI_Knowledge_Base" / "AI_Agent",
+        Path(r"C:\Projects\IAA_AI_Knowledge_Base\AI_Agent"),
+    )
+
+
+def _default_doc_to_md_root() -> Path:
+    return _prefer_existing(
+        PROJECT_ROOT.parent / "doc_to_md",
+        Path(r"C:\Projects\doc_to_md"),
+    )
+
+
+def _default_doc_to_md_python(root: Path) -> Path:
+    return _prefer_existing(
+        root / ".venv" / "Scripts" / "python.exe",
+        root / ".venv" / "bin" / "python",
+        Path(sys.executable),
+    )
+
+
+REFERENCE_AI_AGENT_DIR = _path_from_env("REFERENCE_AI_AGENT_DIR", _default_reference_ai_agent_dir())
+REFERENCE_AI_AGENT_ENV = _path_from_env("REFERENCE_AI_AGENT_ENV", REFERENCE_AI_AGENT_DIR / ".env")
+DOC_TO_MD_ROOT = _path_from_env("DOC_TO_MD_ROOT", _default_doc_to_md_root())
+DOC_TO_MD_PYTHON = _path_from_env("DOC_TO_MD_PYTHON", _default_doc_to_md_python(DOC_TO_MD_ROOT))
 
 
 def now_iso() -> str:

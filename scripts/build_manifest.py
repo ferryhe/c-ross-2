@@ -38,6 +38,7 @@ def build_manifest(knowledge_base_root: Path = KNOWLEDGE_BASE_ROOT, manifest_pat
 
 
 def _parse_front_matter(text: str) -> dict[str, str]:
+    text = text.lstrip("\ufeff")
     if not text.startswith("---\n"):
         return {}
     lines = text.splitlines()
@@ -48,8 +49,18 @@ def _parse_front_matter(text: str) -> dict[str, str]:
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
-        metadata[key.strip()] = value.strip().strip('"')
+        metadata[key.strip()] = _parse_front_matter_value(value.strip())
     return metadata
+
+
+def _parse_front_matter_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return parsed if isinstance(parsed, str) else value
+    return value
 
 
 def parse_args() -> argparse.Namespace:

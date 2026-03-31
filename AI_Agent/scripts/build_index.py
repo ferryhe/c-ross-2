@@ -61,6 +61,17 @@ def iter_markdown_files(source: Path) -> Iterable[Path]:
             yield path.resolve()
 
 
+def _document_path(md_path: Path, source: Path) -> str:
+    resolved_path = md_path.resolve()
+    try:
+        return resolved_path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        try:
+            return resolved_path.relative_to(source.resolve()).as_posix()
+        except ValueError:
+            return md_path.name
+
+
 def chunk_text(text: str, max_tokens: int = 500, overlap: int = 80) -> Iterable[str]:
     """
     Chunk text with semantic boundary awareness.
@@ -132,8 +143,7 @@ def build_index(
             continue
 
         for chunk in chunk_text(text, max_tokens=max_tokens, overlap=overlap):
-            rel_path = md_path.relative_to(REPO_ROOT)
-            documents.append({"path": str(rel_path), "text": chunk})
+            documents.append({"path": _document_path(md_path, source), "text": chunk})
             buffer.append(chunk)
 
             if len(buffer) == batch_size:
