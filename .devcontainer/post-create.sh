@@ -13,8 +13,20 @@ if [ -f AI_Agent/.env ]; then
   ENV_OPENAI_KEY="$(grep '^OPENAI_API_KEY=' AI_Agent/.env | head -n 1 | cut -d '=' -f 2- | tr -d '\r' || true)"
 fi
 if [ -z "$ENV_OPENAI_KEY" ] || [ "$ENV_OPENAI_KEY" = "sk-your-key" ]; then
-  if [ -f /workspaces/.codespaces/shared/.env-secrets ]; then
-    ENV_OPENAI_KEY="$(grep '^OPENAI_API_KEY=' /workspaces/.codespaces/shared/.env-secrets | head -n 1 | cut -d '=' -f 2- | tr -d '\r' || true)"
+  if [ -f /workspaces/.codespaces/shared/user-secrets-envs.json ]; then
+    ENV_OPENAI_KEY="$(python - <<'PY'
+import json
+from pathlib import Path
+
+path = Path('/workspaces/.codespaces/shared/user-secrets-envs.json')
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except (json.JSONDecodeError, OSError):
+    print('')
+else:
+    print(data.get('OPENAI_API_KEY', ''))
+PY
+)"
   fi
 fi
 

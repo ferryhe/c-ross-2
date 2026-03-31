@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,14 +17,13 @@ def test_codespaces_secret_overrides_placeholder_env(tmp_path, monkeypatch):
     local_env = project_root / ".env"
     local_env.write_text("OPENAI_API_KEY=sk-your-key\n", encoding="utf-8")
 
-    codespaces_env = tmp_path / ".env-secrets"
-    codespaces_env.write_text("OPENAI_API_KEY=sk-real-secret\n", encoding="utf-8")
+    codespaces_env = tmp_path / "user-secrets-envs.json"
+    codespaces_env.write_text(json.dumps({"OPENAI_API_KEY": "sk-real-secret"}), encoding="utf-8")
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(project_config, "CODESPACES_SECRET_ENV_PATH", codespaces_env, raising=False)
+    monkeypatch.setattr(project_config, "CODESPACES_SECRET_JSON_PATH", codespaces_env, raising=False)
     monkeypatch.setattr(project_config, "REFERENCE_ENV_PATH", tmp_path / "missing.env", raising=False)
 
     project_config.load_project_env(project_root)
 
     assert project_config.has_real_openai_api_key()
-
