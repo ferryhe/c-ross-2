@@ -6,7 +6,8 @@ from pathlib import Path
 import streamlit as st
 from openai import OpenAI
 
-from scripts.ask import INDEX_PATH, META_PATH, answer_from_hits, get_document_snippets, run_query
+from scripts.ask import INDEX_PATH, META_PATH, answer_from_hits, get_document_snippets, refresh_cache, run_query
+from scripts.build_index import DEFAULT_INDEX, DEFAULT_META, DEFAULT_SOURCE, build_index
 from scripts.project_config import KNOWLEDGE_BASE_NAME, load_project_env
 from scripts.rich_markdown import render_rich_markdown
 
@@ -17,11 +18,25 @@ PREVIEW_CHAR_LIMIT = 3000
 
 load_project_env(PROJECT_ROOT)
 
+
+def has_real_openai_api_key() -> bool:
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    return bool(key) and key != "sk-your-key"
+
+
+def build_index_from_ui() -> None:
+    build_index(
+        source=DEFAULT_SOURCE,
+        index_path=DEFAULT_INDEX,
+        meta_path=DEFAULT_META,
+    )
+    refresh_cache()
+
 st.set_page_config(page_title=KNOWLEDGE_BASE_NAME, layout="wide")
 st.title(KNOWLEDGE_BASE_NAME)
 st.caption("基于本地监管 Markdown 语料的检索问答。回答只使用索引内容，并附带文件引用。")
 
-has_api_key = bool(os.getenv("OPENAI_API_KEY"))
+has_api_key = has_real_openai_api_key()
 index_ready = INDEX_PATH.exists() and META_PATH.exists()
 chat_disabled = not (has_api_key and index_ready)
 
@@ -29,6 +44,17 @@ if not has_api_key:
     st.warning("未检测到 `OPENAI_API_KEY`。可以在 `AI_Agent/.env` 中配置，或复用参考项目环境。")
 if not index_ready:
     st.warning("索引文件尚未生成。请先运行 `python .\\scripts\\build_index.py --source ..\\Knowledge_Base_MarkDown`。")
+    if has_api_key:
+        if st.button("立即构建索引", type="primary"):
+            try:
+                with st.spinner("正在构建索引，首次可能需要几分钟..."):
+                    build_index_from_ui()
+                st.success("索引构建完成，正在刷新页面。")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"索引构建失败：{exc}")
+    else:
+        st.info("请先在 `AI_Agent/.env` 配置有效的 `OPENAI_API_KEY`，然后再构建索引。")
 
 if "history" not in st.session_state:
     st.session_state.history = []

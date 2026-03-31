@@ -64,6 +64,14 @@ streamlit run .\streamlit_app.py
 - Streamlit 服务：通过转发端口 `8501` 访问
 - 访问地址格式通常为：
   `https://CODESPACENAME-8501.app.github.dev`
+- 如果第一次进入 Codespace 还没有索引，请先在 `AI_Agent/.env` 配置有效的 `OPENAI_API_KEY`，然后在页面里点击“立即构建索引”，或者执行：
+
+```bash
+cd /workspaces/c-ross-2/AI_Agent || cd /workspaces/cross2/AI_Agent
+python ./scripts/build_index.py --source ../Knowledge_Base_MarkDown
+```
+
+- 当前架构是 `Streamlit + Python + OpenAI` 的服务端应用，不适合直接部署成 GitHub Pages。短期试用建议直接公开 Codespaces 的 `8501` 端口。
 
 ## 环境变量
 
