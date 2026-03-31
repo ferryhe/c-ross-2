@@ -1,0 +1,7 @@
+AI_Agent/.env
+AI_Agent/.venv/
+AI_Agent/knowledge_base.faiss
+AI_Agent/knowledge_base.meta.pkl
+work/
+__pycache__/
+.pytest_cache/
