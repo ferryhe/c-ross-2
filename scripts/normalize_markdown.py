@@ -48,6 +48,11 @@ BROKEN_CJK_SUBSUP_PATTERN = re.compile(
     r"(?P<op>[_^])\s*\{\s*\\(?P<label>[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+)\s*\}"
 )
 
+LEFT_ARRAY_CASES_PATTERN = re.compile(
+    r"\\left\\\{\s*\\begin\{array\}\{[lcr\s]+\}(?P<body>.*?)\\end\{array\}\s*\\right\.",
+    re.DOTALL,
+)
+
 
 def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNOWLEDGE_BASE_ROOT) -> list[Path]:
     outputs: list[Path] = []
@@ -89,6 +94,7 @@ def _decode_math_entities(segment: str) -> str:
         cleaned = unescaped
     cleaned = BROKEN_CJK_SUBSUP_WITH_INDEX_PATTERN.sub(_replace_broken_cjk_subsup_with_index, cleaned)
     cleaned = BROKEN_CJK_SUBSUP_PATTERN.sub(_replace_broken_cjk_subsup, cleaned)
+    cleaned = LEFT_ARRAY_CASES_PATTERN.sub(_replace_left_array_cases, cleaned)
     return cleaned.replace("\xa0", " ")
 
 
@@ -103,6 +109,11 @@ def _replace_broken_cjk_subsup(match: re.Match[str]) -> str:
     op = match.group("op")
     label = match.group("label")
     return f"{op}{{\\text{{{label}}}}}"
+
+
+def _replace_left_array_cases(match: re.Match[str]) -> str:
+    body = match.group("body").strip()
+    return f"\\begin{{cases}} {body} \\end{{cases}}"
 
 
 def _resolve_target_path(candidate: Path) -> Path:

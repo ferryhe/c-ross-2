@@ -39,3 +39,18 @@ def test_normalize_math_entities_repairs_broken_cjk_subscripts():
     assert "\\mathrm{OL}_{\\text{巨灾}_i}" in cleaned
     assert "\\mathrm{MC}_{\\text{客户}}" in cleaned
     assert "\\mathrm{NE}_{\\text{短期寿险}}" in cleaned
+
+
+def test_normalize_math_entities_rewrites_left_array_piecewise_to_cases():
+    text = (
+        "$$\\mathrm {k} _ {1} = \\left\\{ \\begin{array}{l l} "
+        "-0.05 & x \\in (0, 95\\% ] \\\\ 0 & x \\in (95\\%, 100\\% ] "
+        "\\end{array} \\right.$$"
+    )
+
+    cleaned = normalize_math_entities(text)
+
+    assert "\\left\\{" not in cleaned
+    assert "\\right." not in cleaned
+    assert "\\begin{cases}" in cleaned
+    assert "\\end{cases}" in cleaned
