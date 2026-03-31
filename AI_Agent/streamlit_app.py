@@ -9,7 +9,7 @@ from openai import OpenAI
 from scripts.ask import INDEX_PATH, META_PATH, answer_from_hits, get_document_snippets, refresh_cache, run_query
 from scripts.build_index import DEFAULT_INDEX, DEFAULT_META, DEFAULT_SOURCE, build_index
 from scripts.project_config import KNOWLEDGE_BASE_NAME, load_project_env
-from scripts.rich_markdown import render_rich_markdown
+from scripts.rich_markdown import build_github_blob_url, render_rich_markdown
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -139,5 +139,5 @@ else:
         render_rich_markdown(item["answer"], height=420)
         with st.expander("检索片段", expanded=False):
             for index, hit in enumerate(item["hits"], start=1):
-                st.markdown(f"**[{index}]** `{hit['path']}`")
+                st.markdown(f"**[{index}]** [{hit['path']}]({build_github_blob_url(hit['path'])})")
                 render_rich_markdown(hit["text"], height=320)

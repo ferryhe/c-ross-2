@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+from functools import lru_cache
+from pathlib import Path
+from urllib.parse import quote
 
 
 MARKED_JS_URL = "https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"
 KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
 KATEX_JS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
 KATEX_AUTORENDER_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GITHUB_DOC_PATH_RE = re.compile(
+    r"(?P<citation>\[(?P<index>\d+)\]\s+(?P<path>(?:Knowledge_Base_MarkDown|AI_Agent|plans|scripts|tests|source_regulation|work)/[^\n\r]*?\.md))"
+)
 
 
 def estimate_component_height(markdown_text: str, *, min_height: int = 160, max_height: int = 900) -> int:
@@ -18,9 +27,59 @@ def estimate_component_height(markdown_text: str, *, min_height: int = 160, max_
     return max(min_height, min(max_height, estimated))
 
 
+def _run_git_command(*args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+    return result.stdout.strip()
+
+
+@lru_cache(maxsize=1)
+def get_github_blob_base_url() -> str:
+    remote = _run_git_command("config", "--get", "remote.origin.url")
+    branch = _run_git_command("rev-parse", "--abbrev-ref", "HEAD") or "main"
+
+    if remote.startswith("git@github.com:"):
+        repo = remote.removeprefix("git@github.com:")
+    elif remote.startswith("https://github.com/"):
+        repo = remote.removeprefix("https://github.com/")
+    else:
+        repo = "ferryhe/c-ross-2"
+
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    if branch == "HEAD":
+        branch = "main"
+
+    return f"https://github.com/{repo}/blob/{branch}"
+
+
+def build_github_blob_url(path: str) -> str:
+    normalized = path.replace("\\", "/").lstrip("./")
+    encoded_path = quote(normalized, safe="/-_.~")
+    return f"{get_github_blob_base_url()}/{encoded_path}"
+
+
+def linkify_github_blob_references(markdown_text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        citation = match.group("citation")
+        path = match.group("path")
+        return f"[{citation}]({build_github_blob_url(path)})"
+
+    return GITHUB_DOC_PATH_RE.sub(replace, markdown_text)
+
+
 def build_rich_markdown_html(markdown_text: str) -> str:
+    markdown_text = linkify_github_blob_references(markdown_text)
     payload = json.dumps(markdown_text, ensure_ascii=False).replace("</", "<\\/")
-    return f"""<!DOCTYPE html>
+    return rf"""<!DOCTYPE html>
 <html lang="zh">
   <head>
     <meta charset="utf-8" />
@@ -114,6 +173,12 @@ def build_rich_markdown_html(markdown_text: str) -> str:
         overflow-y: hidden;
         padding: 0.2rem 0;
       }}
+
+      #root a {{
+        color: #0f62fe;
+        text-decoration: underline;
+        text-underline-offset: 0.12em;
+      }}
     </style>
     <script src="{MARKED_JS_URL}"></script>
     <script defer src="{KATEX_JS_URL}"></script>
@@ -182,6 +247,82 @@ def build_rich_markdown_html(markdown_text: str) -> str:
         }}
       }}
 
+      function normalizeLikelyLatexArtifacts(mathText) {{
+        return mathText.replace(
+          /(\\\\(?:mathrm|mathbf|mathit|operatorname)\s*\\{{[^{{}}]+\\}})\s*\\{{\s*(\\\\text\s*\\{{[^{{}}]+\\}})\s*\\}}/g,
+          "$1_{{$2}}"
+        );
+      }}
+
+      function extractMathSegments(markdown) {{
+        const codeFencePattern = /```[\s\S]*?```/g;
+        const mathPattern = /\$\$[\s\S]+?\$\$|\\\\\[[\s\S]+?\\\\\]|(?<!\\)\$[^$\n]+?(?<!\\)\$|\\\\\([^\n]+?\\\\\)/g;
+        const segments = [];
+        let output = "";
+        let cursor = 0;
+
+        for (const codeFence of markdown.matchAll(codeFencePattern)) {{
+          const codeStart = codeFence.index ?? 0;
+          const codeText = codeFence[0];
+          output += markdown
+            .slice(cursor, codeStart)
+            .replace(mathPattern, (match) => {{
+              const token = `@@MATH_SEGMENT_${{segments.length}}@@`;
+              segments.push(normalizeLikelyLatexArtifacts(match));
+              return token;
+            }});
+          output += codeText;
+          cursor = codeStart + codeText.length;
+        }}
+
+        output += markdown.slice(cursor).replace(mathPattern, (match) => {{
+          const token = `@@MATH_SEGMENT_${{segments.length}}@@`;
+          segments.push(normalizeLikelyLatexArtifacts(match));
+          return token;
+        }});
+
+        return {{ markdown: output, segments }};
+      }}
+
+      function restoreMathSegments(root, segments) {{
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const replacements = [];
+
+        while (walker.nextNode()) {{
+          const node = walker.currentNode;
+          const text = node.textContent || "";
+          if (!text.includes("@@MATH_SEGMENT_")) {{
+            continue;
+          }}
+
+          const fragment = document.createDocumentFragment();
+          const parts = text.split(/(@@MATH_SEGMENT_\d+@@)/g).filter(Boolean);
+          for (const part of parts) {{
+            const match = part.match(/^@@MATH_SEGMENT_(\d+)@@$/);
+            if (match) {{
+              fragment.appendChild(document.createTextNode(segments[Number(match[1])] || part));
+            }} else {{
+              fragment.appendChild(document.createTextNode(part));
+            }}
+          }}
+          replacements.push([node, fragment]);
+        }}
+
+        for (const [node, fragment] of replacements) {{
+          node.parentNode.replaceChild(fragment, node);
+        }}
+      }}
+
+      function configureLinks(root) {{
+        for (const link of root.querySelectorAll("a[href]")) {{
+          const href = link.getAttribute("href") || "";
+          if (href.startsWith("http://") || href.startsWith("https://")) {{
+            link.setAttribute("target", "_blank");
+            link.setAttribute("rel", "noopener noreferrer");
+          }}
+        }}
+      }}
+
       function render() {{
         if (!window.marked || !window.renderMathInElement) {{
           window.setTimeout(render, 50);
@@ -194,11 +335,15 @@ def build_rich_markdown_html(markdown_text: str) -> str:
         }});
 
         const root = document.getElementById("root");
-        root.innerHTML = marked.parse(markdownSource);
+        const extracted = extractMathSegments(markdownSource);
+        root.innerHTML = marked.parse(extracted.markdown);
+        restoreMathSegments(root, extracted.segments);
         sanitizeHtmlTree(root);
+        configureLinks(root);
 
         window.renderMathInElement(root, {{
           throwOnError: false,
+          strict: "ignore",
           delimiters: [
             {{ left: "$$", right: "$$", display: true }},
             {{ left: "\\\\[", right: "\\\\]", display: true }},

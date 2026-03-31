@@ -16,5 +16,7 @@ def test_rich_markdown_pins_marked_version_and_sanitizes_html():
 
     assert "marked@12.0.2/marked.min.js" in html
     assert "sanitizeHtmlTree" in html
+    assert "configureLinks" in html
     assert 'name.startsWith("on")' in html
     assert 'value.startsWith("javascript:")' in html
+    assert 'link.setAttribute("target", "_blank")' in html
