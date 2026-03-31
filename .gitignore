@@ -5,3 +5,15 @@ AI_Agent/knowledge_base.meta.pkl
 work/
 __pycache__/
 .pytest_cache/
+.venv/
+.env
+.env.*
+.streamlit/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.temp
+*.bak
