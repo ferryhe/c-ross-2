@@ -12,6 +12,11 @@ ENV_OPENAI_KEY=""
 if [ -f AI_Agent/.env ]; then
   ENV_OPENAI_KEY="$(grep '^OPENAI_API_KEY=' AI_Agent/.env | head -n 1 | cut -d '=' -f 2- | tr -d '\r' || true)"
 fi
+if [ -z "$ENV_OPENAI_KEY" ] || [ "$ENV_OPENAI_KEY" = "sk-your-key" ]; then
+  if [ -f /workspaces/.codespaces/shared/.env-secrets ]; then
+    ENV_OPENAI_KEY="$(grep '^OPENAI_API_KEY=' /workspaces/.codespaces/shared/.env-secrets | head -n 1 | cut -d '=' -f 2- | tr -d '\r' || true)"
+  fi
+fi
 
 EFFECTIVE_OPENAI_KEY="${OPENAI_API_KEY:-$ENV_OPENAI_KEY}"
 INDEX_FILES_READY=false
