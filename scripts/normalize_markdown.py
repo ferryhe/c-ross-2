@@ -53,6 +53,11 @@ LEFT_ARRAY_CASES_PATTERN = re.compile(
     re.DOTALL,
 )
 
+CASES_ENV_PATTERN = re.compile(
+    r"(?P<prefix>.*?)\\begin\{cases\}(?P<body>.*?)\\end\{cases\}(?P<suffix>.*)",
+    re.DOTALL,
+)
+
 
 def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNOWLEDGE_BASE_ROOT) -> list[Path]:
     outputs: list[Path] = []
@@ -95,7 +100,10 @@ def _decode_math_entities(segment: str) -> str:
     cleaned = BROKEN_CJK_SUBSUP_WITH_INDEX_PATTERN.sub(_replace_broken_cjk_subsup_with_index, cleaned)
     cleaned = BROKEN_CJK_SUBSUP_PATTERN.sub(_replace_broken_cjk_subsup, cleaned)
     cleaned = LEFT_ARRAY_CASES_PATTERN.sub(_replace_left_array_cases, cleaned)
-    return cleaned.replace("\xa0", " ")
+    cleaned = cleaned.replace("\xa0", " ")
+    if cleaned.startswith("$$") and cleaned.endswith("$$") and r"\begin{cases}" in cleaned:
+        return _rewrite_display_cases_as_math_fence(cleaned)
+    return cleaned
 
 
 def _replace_broken_cjk_subsup_with_index(match: re.Match[str]) -> str:
@@ -114,6 +122,35 @@ def _replace_broken_cjk_subsup(match: re.Match[str]) -> str:
 def _replace_left_array_cases(match: re.Match[str]) -> str:
     body = match.group("body").strip()
     return f"\\begin{{cases}} {body} \\end{{cases}}"
+
+
+def _rewrite_display_cases_as_math_fence(segment: str) -> str:
+    body = segment[2:-2].strip()
+    normalized = CASES_ENV_PATTERN.sub(_format_cases_environment, body)
+    return f"```math\n{normalized}\n```"
+
+
+def _format_cases_environment(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    body = match.group("body").strip()
+    suffix = match.group("suffix").lstrip()
+    rows = [row.strip() for row in re.split(r"\s*\\\\\s*", body) if row.strip()]
+    rendered_body = "\n".join(
+        f"{row} \\\\" if index < len(rows) - 1 else row
+        for index, row in enumerate(rows)
+    )
+    pieces = []
+    if prefix:
+        pieces.append(f"{prefix}\\begin{{cases}}")
+    else:
+        pieces.append(r"\begin{cases}")
+    if rendered_body:
+        pieces.append(rendered_body)
+    end_line = r"\end{cases}"
+    if suffix:
+        end_line = f"{end_line} {suffix}"
+    pieces.append(end_line)
+    return "\n".join(pieces)
 
 
 def _resolve_target_path(candidate: Path) -> Path:

@@ -28,7 +28,7 @@ def test_normalize_math_entities_decodes_alignment_in_display_math():
     assert "&amp;" not in cleaned
     assert "&lt;" not in cleaned
     assert "&gt;" not in cleaned
-    assert "\\begin{cases} 0 & x < 1 \\\\ 1 & x > 1 \\end{cases}" in cleaned
+    assert cleaned == "```math\n\\begin{cases}\n0 & x < 1 \\\\\n1 & x > 1\n\\end{cases}\n```"
 
 
 def test_normalize_math_entities_repairs_broken_cjk_subscripts():
@@ -54,3 +54,21 @@ def test_normalize_math_entities_rewrites_left_array_piecewise_to_cases():
     assert "\\right." not in cleaned
     assert "\\begin{cases}" in cleaned
     assert "\\end{cases}" in cleaned
+    assert cleaned.startswith("```math\n")
+    assert cleaned.endswith("\n```")
+    assert "\\begin{cases}\n-0.05 & x \\in (0, 95\\% ] \\\\\n0 & x \\in (95\\%, 100\\% ]\n\\end{cases}" in cleaned
+
+
+def test_normalize_math_entities_rewrites_display_cases_to_math_fence():
+    text = "$$\\mathrm {S F} = \\begin{cases} a & 0 < t \\leq 10 \\\\ b & t > 10 \\end{cases}$$"
+
+    cleaned = normalize_math_entities(text)
+
+    assert cleaned == (
+        "```math\n"
+        "\\mathrm {S F} = \\begin{cases}\n"
+        "a & 0 < t \\leq 10 \\\\\n"
+        "b & t > 10\n"
+        "\\end{cases}\n"
+        "```"
+    )
