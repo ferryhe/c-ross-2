@@ -102,6 +102,8 @@ LATEX_INLINE_REPLACEMENTS = {
     r"\tau": "τ",
 }
 
+HEADING_PATTERN = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.+?)\s*$")
+
 
 def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNOWLEDGE_BASE_ROOT) -> list[Path]:
     outputs: list[Path] = []
@@ -112,7 +114,9 @@ def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNO
         target_path = _resolve_target_path(output_root / category / raw_markdown.name)
         ensure_parent(target_path)
 
-        body = normalize_math_entities(raw_markdown.read_text(encoding="utf-8"))
+        merged_title = metadata.get("title") or raw_markdown.stem
+        body = normalize_math_entities(raw_markdown.read_text(encoding="utf-8").lstrip("\ufeff"))
+        body = _clean_body(body, merged_title)
         target_path.write_text(_render_front_matter(metadata, raw_markdown, body, category), encoding="utf-8")
 
         for asset_dir_name in metadata.get("asset_dirs", []):
@@ -298,6 +302,90 @@ def _yaml_scalar(value: object) -> str:
         return ""
     if any(char in text for char in [":", "#", "\n", '"']) or text.startswith(" ") or text.endswith(" "):
         return json.dumps(text, ensure_ascii=False)
+    return text
+
+
+def _clean_body(text: str, title: str) -> str:
+    cleaned = _dedupe_consecutive_identical_headings(text)
+    cleaned = _dedupe_leading_title_heading(cleaned, title)
+    return cleaned
+
+
+def _dedupe_consecutive_identical_headings(text: str) -> str:
+    lines = text.splitlines()
+    rendered: list[str] = []
+    pending_blanks: list[str] = []
+    previous_heading: tuple[str, str] | None = None
+    only_blank_since_heading = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            pending_blanks.append(line)
+            continue
+        heading_match = HEADING_PATTERN.match(stripped)
+        if heading_match:
+            key = (heading_match.group("level"), heading_match.group("title"))
+            if previous_heading == key and only_blank_since_heading:
+                pending_blanks.clear()
+                continue
+            rendered.extend(pending_blanks)
+            pending_blanks.clear()
+            rendered.append(line)
+            previous_heading = key
+            only_blank_since_heading = True
+            continue
+        rendered.extend(pending_blanks)
+        pending_blanks.clear()
+        rendered.append(line)
+        only_blank_since_heading = False
+
+    rendered.extend(pending_blanks)
+    return "\n".join(rendered)
+
+
+def _dedupe_leading_title_heading(text: str, title: str) -> str:
+    lines = text.splitlines()
+    first_heading_index = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("_Note:"):
+            continue
+        match = HEADING_PATTERN.match(stripped)
+        if not match:
+            return text
+        if match.group("level") != "#":
+            return text
+        first_heading_index = index
+        break
+    if first_heading_index is None:
+        return text
+
+    normalized_title = title.strip()
+    first_heading = HEADING_PATTERN.match(lines[first_heading_index].strip())
+    if not first_heading or first_heading.group("title").strip() != normalized_title:
+        return text
+
+    next_index = first_heading_index + 1
+    while next_index < len(lines) and not lines[next_index].strip():
+        next_index += 1
+    if next_index >= len(lines):
+        return text
+
+    next_line = lines[next_index].strip()
+    next_heading = HEADING_PATTERN.match(next_line)
+    if next_heading and next_heading.group("level") == "#" and next_heading.group("title").strip() == normalized_title:
+        del lines[next_index]
+        while next_index < len(lines) and not lines[next_index].strip():
+            del lines[next_index]
+        return "\n".join(lines)
+    if next_line == normalized_title:
+        del lines[next_index]
+        while next_index < len(lines) and not lines[next_index].strip():
+            del lines[next_index]
+        return "\n".join(lines)
     return text
 
 
