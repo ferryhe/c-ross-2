@@ -58,6 +58,50 @@ CASES_ENV_PATTERN = re.compile(
     re.DOTALL,
 )
 
+INLINE_MATH_PATTERN = re.compile(r"(?<!\$)\$(?!\$)(?P<body>.*?)(?<!\\)\$")
+
+INLINE_PLAINIFY_BLOCKERS = (
+    r"\frac",
+    r"\sqrt",
+    r"\sum",
+    r"\times",
+    r"\left",
+    r"\right",
+    r"\begin",
+    r"\end",
+    r"\min",
+    r"\max",
+    r"\operatorname",
+    r"\in",
+    r"\le",
+    r"\ge",
+    r"\dots",
+    r"\cdot",
+    "<",
+    ">",
+)
+
+INLINE_WRAPPER_PATTERN = re.compile(r"\\(?:mathrm|mathbf|mathit|text)\s*\{([^{}]*)\}")
+INLINE_SUBSUP_BRACES_PATTERN = re.compile(r"([_^])\s*\{([^{}]+)\}")
+INLINE_SIMPLE_BRACES_PATTERN = re.compile(r"\{([^{}]+)\}")
+INLINE_SPACE_AROUND_SCRIPT_PATTERN = re.compile(r"\s*([_^,])\s*")
+INLINE_SYMBOL_TOKEN = r"[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaffα-ωΑ-ΩΔρβγμνπστυφχψω_,]+(?:\^[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff*]+)?"
+SIMPLE_PLAIN_INLINE_PATTERN = re.compile(rf"^{INLINE_SYMBOL_TOKEN}$")
+ASSIGNMENT_PLAIN_INLINE_PATTERN = re.compile(rf"^{INLINE_SYMBOL_TOKEN}\s*=\s*[-+−]?\d+(?:\.\d+)?(?:\s*%?)?$")
+RANGE_PLAIN_INLINE_PATTERN = re.compile(rf"^{INLINE_SYMBOL_TOKEN}\s*-\s*{INLINE_SYMBOL_TOKEN}$")
+
+LATEX_INLINE_REPLACEMENTS = {
+    r"\rho": "ρ",
+    r"\beta": "β",
+    r"\Delta": "Δ",
+    r"\alpha": "α",
+    r"\gamma": "γ",
+    r"\mu": "μ",
+    r"\pi": "π",
+    r"\sigma": "σ",
+    r"\tau": "τ",
+}
+
 
 def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNOWLEDGE_BASE_ROOT) -> list[Path]:
     outputs: list[Path] = []
@@ -85,7 +129,8 @@ def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNO
 
 
 def normalize_math_entities(markdown: str) -> str:
-    return MATH_SEGMENT_PATTERN.sub(lambda match: _decode_math_entities(match.group(0)), markdown)
+    decoded = MATH_SEGMENT_PATTERN.sub(lambda match: _decode_math_entities(match.group(0)), markdown)
+    return _plainify_inline_math_references(decoded)
 
 
 def _decode_math_entities(segment: str) -> str:
@@ -104,6 +149,66 @@ def _decode_math_entities(segment: str) -> str:
     if cleaned.startswith("$$") and cleaned.endswith("$$") and r"\begin{cases}" in cleaned:
         return _rewrite_display_cases_as_math_fence(cleaned)
     return cleaned
+
+
+def _plainify_inline_math_references(markdown: str) -> str:
+    lines = markdown.splitlines()
+    normalized_lines: list[str] = []
+    in_fence = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            normalized_lines.append(line)
+            continue
+        if in_fence or "$$" in line or stripped.startswith("|") or _line_is_only_inline_math(line):
+            normalized_lines.append(line)
+            continue
+        normalized_lines.append(INLINE_MATH_PATTERN.sub(_replace_inline_math_reference, line))
+    return "\n".join(normalized_lines)
+
+
+def _replace_inline_math_reference(match: re.Match[str]) -> str:
+    body = match.group("body")
+    plain = _plainify_inline_math(body)
+    if plain is None:
+        return match.group(0)
+    return f"`{plain}`"
+
+
+def _plainify_inline_math(body: str) -> str | None:
+    if any(token in body for token in INLINE_PLAINIFY_BLOCKERS):
+        return None
+    candidate = body.strip().replace("\xa0", " ")
+    if not candidate:
+        return None
+    candidate = candidate.replace(r"\%", "%")
+    for latex, replacement in LATEX_INLINE_REPLACEMENTS.items():
+        candidate = candidate.replace(latex, replacement)
+    previous = None
+    while candidate != previous:
+        previous = candidate
+        candidate = INLINE_WRAPPER_PATTERN.sub(r"\1", candidate)
+        candidate = INLINE_SUBSUP_BRACES_PATTERN.sub(r"\1\2", candidate)
+        candidate = INLINE_SIMPLE_BRACES_PATTERN.sub(r"\1", candidate)
+    candidate = re.sub(r"\\([A-Za-z]+)", r"\1", candidate)
+    candidate = INLINE_SPACE_AROUND_SCRIPT_PATTERN.sub(r"\1", candidate)
+    candidate = re.sub(r"\s*=\s*", " = ", candidate)
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    if (
+        SIMPLE_PLAIN_INLINE_PATTERN.fullmatch(candidate)
+        or ASSIGNMENT_PLAIN_INLINE_PATTERN.fullmatch(candidate)
+        or RANGE_PLAIN_INLINE_PATTERN.fullmatch(candidate)
+    ):
+        return candidate
+    return None
+
+
+def _line_is_only_inline_math(line: str) -> bool:
+    if "$" not in line:
+        return False
+    remainder = INLINE_MATH_PATTERN.sub("", line)
+    return not remainder.strip()
 
 
 def _replace_broken_cjk_subsup_with_index(match: re.Match[str]) -> str:

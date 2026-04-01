@@ -72,3 +72,34 @@ def test_normalize_math_entities_rewrites_display_cases_to_math_fence():
         "\\end{cases}\n"
         "```"
     )
+
+
+def test_normalize_math_entities_plainifies_simple_inline_references():
+    text = (
+        "$\\rho$ 为 $\\mathrm{MC}_{\\text{市场}}$ 与 $\\mathrm{MC}_{\\text{信用}}$ 的相关系数，"
+        "$\\rho = 0.35$。"
+    )
+
+    cleaned = normalize_math_entities(text)
+
+    assert cleaned == "`ρ` 为 `MC_市场` 与 `MC_信用` 的相关系数，`ρ = 0.35`。"
+
+
+def test_normalize_math_entities_plainifies_inline_subscripts_in_prose():
+    text = (
+        "（三）$\\mathrm{LA}_{\\text{上限}}$ 为损失吸收效应调整上限；"
+        "$\\mathbf{MC}_{\\text{保费及准备金}_i}$ 和 $\\mathbf{MC}_{\\text{保费及准备金}_j}$ 分别为业务类型。"
+    )
+
+    cleaned = normalize_math_entities(text)
+
+    assert cleaned == "（三）`LA_上限` 为损失吸收效应调整上限；`MC_保费及准备金_i` 和 `MC_保费及准备金_j` 分别为业务类型。"
+
+
+def test_normalize_math_entities_keeps_complex_inline_math():
+    text = "t 为年度，$20 < t \\leq 40$；当 $\\sum_{i=1}^{36} EP_i < 0$ 时不适用。"
+
+    cleaned = normalize_math_entities(text)
+
+    assert "$20 < t \\leq 40$" in cleaned
+    assert "$\\sum_{i=1}^{36} EP_i < 0$" in cleaned
