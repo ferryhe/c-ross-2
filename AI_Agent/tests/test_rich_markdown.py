@@ -11,9 +11,11 @@ if str(AI_AGENT_DIR) not in sys.path:
 from scripts import rich_markdown
 from scripts.rich_markdown import (
     build_github_blob_url,
+    build_inline_rich_markdown_html,
     build_rich_markdown_html,
     estimate_component_height,
     linkify_github_blob_references,
+    linkify_numeric_citations,
 )
 
 
@@ -25,6 +27,27 @@ def test_build_rich_markdown_html_includes_math_and_table_support():
     assert "renderMathInElement" in html
     assert "streamlit:setFrameHeight" in html
     assert "| a | b |" in html
+
+
+def test_build_rich_markdown_html_includes_responsive_frame_sizing():
+    html = build_rich_markdown_html("hello", min_height=120, max_height=None)
+
+    assert 'const minFrameHeight = 120;' in html
+    assert "const maxFrameHeight = null;" in html
+    assert "scheduleFrameHeightSync" in html
+    assert 'window.visualViewport.addEventListener("resize"' in html
+    assert "document.fonts.ready.then" in html
+
+
+def test_build_inline_rich_markdown_html_uses_dom_rendering_without_iframe_height_logic():
+    html = build_inline_rich_markdown_html("hello", root_id="rich-markdown-test", min_height=120, max_height=None)
+
+    assert 'id="rich-markdown-test"' in html
+    assert 'data-rich-markdown-root="rich-markdown-test"' in html
+    assert "ensureScript" in html
+    assert "unsafe_allow_javascript" not in html
+    assert "streamlit:setFrameHeight" not in html
+    assert "marked.parse" in html
 
 
 def test_build_rich_markdown_html_escapes_script_closing_tags():
@@ -40,6 +63,16 @@ def test_estimate_component_height_scales_with_content():
 
     assert long_height > short_height
     assert short_height >= 160
+
+
+def test_estimate_component_height_allows_unbounded_growth():
+    huge_text = "\n".join(["line"] * 300)
+
+    bounded = estimate_component_height(huge_text, max_height=1400)
+    unbounded = estimate_component_height(huge_text, max_height=None)
+
+    assert bounded == 1400
+    assert unbounded > bounded
 
 
 def test_linkify_github_blob_references_converts_citations(monkeypatch):

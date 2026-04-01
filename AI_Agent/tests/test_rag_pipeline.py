@@ -5,6 +5,7 @@ Tests chunking, retrieval, file validation, and error handling.
 
 from __future__ import annotations
 
+import pickle
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -210,6 +211,164 @@ class TestBuildIndex:
         captured = capsys.readouterr()
         assert "empty.md" in captured.out.lower()
         assert "warning" in captured.out.lower() or "skip" in captured.out.lower()
+
+    def test_build_index_stores_full_document_without_front_matter(self, tmp_path, monkeypatch):
+        class MockEncoder:
+            def encode(self, text):
+                return text.split()
+
+            def decode(self, tokens):
+                return " ".join(tokens)
+
+        monkeypatch.setattr(build_index_module, "get_encoder", lambda: MockEncoder())
+
+        repo_root = tmp_path / "repo"
+        corpus_dir = repo_root / "Knowledge_Base_MarkDown"
+        corpus_dir.mkdir(parents=True)
+        doc_path = corpus_dir / "doc.md"
+        doc_path.write_text(
+            "---\n"
+            "title: Test Document\n"
+            "---\n"
+            "# Test Document\n"
+            "First paragraph.\n\n"
+            "Second paragraph with more text.\n",
+            encoding="utf-8",
+        )
+
+        index_path = repo_root / "AI_Agent" / "test.faiss"
+        meta_path = repo_root / "AI_Agent" / "test.meta.pkl"
+        index_path.parent.mkdir(parents=True)
+
+        captured_inputs = []
+
+        monkeypatch.setattr(build_index_module, "REPO_ROOT", repo_root)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+        monkeypatch.setattr(
+            build_index_module,
+            "embed_batches",
+            lambda client, texts: captured_inputs.extend(texts) or [_vectorize(text) for text in texts],
+        )
+        monkeypatch.setattr(build_index_module, "OpenAI", lambda: object())
+
+        build_index_module.build_index(
+            source=corpus_dir,
+            index_path=index_path,
+            meta_path=meta_path,
+            max_tokens=5,
+            overlap=0,
+            batch_size=2,
+            embed_max_tokens=100,
+        )
+
+        with meta_path.open("rb") as fh:
+            documents = pickle.load(fh)
+
+        assert len(documents) == 1
+        assert documents[0]["title"] == "Test Document"
+        assert documents[0]["text"].startswith("# Test Document")
+        assert "---" not in documents[0]["text"]
+        assert documents[0]["token_count"] > 0
+        assert captured_inputs
+        assert "Path:" in captured_inputs[0]
+        assert "Title: Test Document" in captured_inputs[0]
+
+    def test_build_index_keeps_one_vector_per_document(self, tmp_path, monkeypatch):
+        class MockEncoder:
+            def encode(self, text):
+                return text.split()
+
+            def decode(self, tokens):
+                return " ".join(tokens)
+
+        monkeypatch.setattr(build_index_module, "get_encoder", lambda: MockEncoder())
+
+        repo_root = tmp_path / "repo"
+        corpus_dir = repo_root / "Knowledge_Base_MarkDown"
+        corpus_dir.mkdir(parents=True)
+        long_text = " ".join(f"section{i}" for i in range(200))
+        (corpus_dir / "long.md").write_text(long_text, encoding="utf-8")
+
+        index_path = repo_root / "AI_Agent" / "test.faiss"
+        meta_path = repo_root / "AI_Agent" / "test.meta.pkl"
+        index_path.parent.mkdir(parents=True)
+
+        monkeypatch.setattr(build_index_module, "REPO_ROOT", repo_root)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+        monkeypatch.setattr(
+            build_index_module,
+            "embed_batches",
+            lambda client, texts: [_vectorize(text) for text in texts],
+        )
+        monkeypatch.setattr(build_index_module, "OpenAI", lambda: object())
+
+        build_index_module.build_index(
+            source=corpus_dir,
+            index_path=index_path,
+            meta_path=meta_path,
+            max_tokens=10,
+            overlap=0,
+            batch_size=2,
+            embed_max_tokens=50,
+        )
+
+        with meta_path.open("rb") as fh:
+            documents = pickle.load(fh)
+
+        assert len(documents) == 1
+        assert documents[0]["path"].endswith("long.md")
+
+    def test_build_index_creates_structured_section_artifacts(self, tmp_path, monkeypatch):
+        class MockEncoder:
+            def encode(self, text):
+                return text.split()
+
+            def decode(self, tokens):
+                return " ".join(tokens)
+
+        monkeypatch.setattr(build_index_module, "get_encoder", lambda: MockEncoder())
+
+        repo_root = tmp_path / "repo"
+        corpus_dir = repo_root / "Knowledge_Base_MarkDown"
+        corpus_dir.mkdir(parents=True)
+        (corpus_dir / "rules.md").write_text(
+            "# 标题\n\n"
+            "第一章 总则\n\n"
+            "第一条 这是第一条的说明。\n\n"
+            "第二条 这是第二条的说明。\n\n"
+            "| 列1 | 列2 |\n| --- | --- |\n| A | B |\n",
+            encoding="utf-8",
+        )
+
+        index_path = repo_root / "AI_Agent" / "test.faiss"
+        meta_path = repo_root / "AI_Agent" / "test.meta.pkl"
+        index_path.parent.mkdir(parents=True)
+
+        monkeypatch.setattr(build_index_module, "REPO_ROOT", repo_root)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+        monkeypatch.setattr(
+            build_index_module,
+            "embed_batches",
+            lambda client, texts: [_vectorize(text) for text in texts],
+        )
+        monkeypatch.setattr(build_index_module, "OpenAI", lambda: object())
+
+        build_index_module.build_index(
+            source=corpus_dir,
+            index_path=index_path,
+            meta_path=meta_path,
+            batch_size=2,
+        )
+
+        section_index_path = build_index_module.derive_section_index_path(index_path)
+        section_meta_path = build_index_module.derive_section_meta_path(meta_path)
+        assert section_index_path.exists()
+        assert section_meta_path.exists()
+
+        sections = pickle.loads(section_meta_path.read_bytes())
+        assert sections
+        assert all(section["source_kind"] == "section" for section in sections)
+        assert all(section["section_kind"] == "semantic" for section in sections)
 
 
 class TestRetrieval:
@@ -582,6 +741,15 @@ class TestAgenticQuery:
 class TestRetrievalEnhancements:
     """Test reranking and domain-aware query guidance."""
 
+    def test_classify_retrieval_strategy_routes_summary_query_to_document(self):
+        assert ask_module.classify_retrieval_strategy("规则第2号主要涉及什么内容") == "document"
+
+    def test_classify_retrieval_strategy_routes_formula_query_to_section(self):
+        assert ask_module.classify_retrieval_strategy("规则第2号的计算公式是什么") == "section"
+
+    def test_classify_retrieval_strategy_routes_comparison_query_to_hybrid(self):
+        assert ask_module.classify_retrieval_strategy("比较规则第2号和第4号的关系") == "hybrid"
+
     def test_build_domain_context_detects_actuarial_governance_query(self):
         context = enhancements_module.build_domain_context(
             "What governance and risk controls should actuaries use for insurance AI models?"
@@ -635,6 +803,7 @@ class TestRetrievalEnhancements:
         ]
 
         monkeypatch.setattr(ask_module, "_load_artifacts", lambda: (FakeIndex(), docs))
+        monkeypatch.setattr(ask_module, "_load_section_artifacts", lambda required=False, refresh=False: (None, []))
         monkeypatch.setattr(ask_module, "_create_embedding", lambda client, text: _vectorize(text))
 
         hits = ask_module.retrieve(
@@ -675,6 +844,7 @@ class TestRetrievalEnhancements:
         )
 
         assert any(hit["path"].endswith("保险公司偿付能力监管规则第2号：最低资本.md") for hit in hits)
+        assert hits[0]["path"].endswith("保险公司偿付能力监管规则第2号：最低资本.md")
 
     def test_agentic_planner_prompt_includes_domain_guidance(self):
         captured_messages = []
@@ -723,3 +893,114 @@ class TestRetrievalEnhancements:
         )
 
         assert captured["k"] == 7
+
+    def test_run_query_passes_model_override_to_agentic_mode(self, monkeypatch):
+        captured = {}
+
+        def fake_run_agentic_query(client, question, **kwargs):
+            captured.update(kwargs)
+            return {
+                "mode": "agentic",
+                "answer": "ok",
+                "hits": [],
+                "sub_queries": [],
+                "executed_queries": [],
+                "iterations": 0,
+                "reflection_notes": [],
+                "retrieval_history": [],
+            }
+
+        monkeypatch.setattr(ask_module, "run_agentic_query", fake_run_agentic_query)
+
+        ask_module.run_query(
+            client=object(),
+            question="Test question",
+            mode="agentic",
+            model="gpt-5.4-mini",
+        )
+
+        assert captured["model"] == "gpt-5.4-mini"
+
+    def test_answer_from_hits_uses_model_override(self, monkeypatch):
+        captured = {}
+
+        monkeypatch.setattr(ask_module, "prepare_answer_hits", lambda question, hits: hits)
+
+        def fake_chat_completion(client, messages, temperature=0.2, *, model=None):
+            captured["model"] = model
+            return "done"
+
+        monkeypatch.setattr(ask_module, "_create_chat_completion", fake_chat_completion)
+
+        answer = ask_module.answer_from_hits(
+            client=object(),
+            question="Question?",
+            hits=[{"path": "doc.md", "text": "Evidence", "token_count": 1}],
+            model="gpt-4.1",
+        )
+
+        assert answer == "done"
+        assert captured["model"] == "gpt-4.1"
+
+
+class TestWholeDocumentAnswering:
+    def test_prepare_answer_hits_respects_document_budget(self):
+        hits = [
+            {"path": "doc1.md", "text": "A", "token_count": 60000, "retrieval_score": 0.95},
+            {"path": "doc2.md", "text": "B", "token_count": 50000, "retrieval_score": 0.90},
+            {"path": "doc3.md", "text": "C", "token_count": 30000, "retrieval_score": 0.85},
+        ]
+
+        selected = ask_module.prepare_answer_hits(
+            "test question",
+            hits,
+            max_context_tokens=100000,
+        )
+
+        assert [hit["path"] for hit in selected] == ["doc1.md", "doc3.md"]
+
+    def test_prepare_answer_hits_keeps_best_document_when_over_budget(self):
+        hits = [
+            {"path": "doc1.md", "text": "A", "token_count": 150000, "retrieval_score": 0.95},
+            {"path": "doc2.md", "text": "B", "token_count": 10000, "retrieval_score": 0.90},
+        ]
+
+        selected = ask_module.prepare_answer_hits(
+            "test question",
+            hits,
+            max_context_tokens=100000,
+        )
+
+        assert [hit["path"] for hit in selected] == ["doc1.md"]
+
+    def test_prepare_answer_hits_keeps_document_and_section_budget(self):
+        hits = [
+            {"path": "doc1.md", "text": "Document body", "token_count": 60000, "retrieval_score": 0.95, "source_kind": "document"},
+            {"path": "doc2.md", "text": "Other document", "token_count": 50000, "retrieval_score": 0.90, "source_kind": "document"},
+            {"path": "doc1.md", "text": "Section body", "token_count": 2000, "retrieval_score": 0.92, "source_kind": "section", "section_heading": "第一条", "section_kind": "semantic"},
+        ]
+
+        selected = ask_module.prepare_answer_hits(
+            "规则第2号的计算公式是什么",
+            hits,
+            max_context_tokens=70000,
+            section_context_tokens=4000,
+        )
+
+        assert any(hit.get("source_kind") == "document" for hit in selected)
+        assert any(hit.get("source_kind") == "section" for hit in selected)
+
+    def test_load_artifacts_rejects_legacy_chunk_metadata(self, tmp_path, monkeypatch):
+        index_path = tmp_path / "legacy.faiss"
+        meta_path = tmp_path / "legacy.pkl"
+        index_path.write_bytes(b"index")
+        meta_path.write_bytes(pickle.dumps([{"path": "doc.md", "text": "legacy chunk"}]))
+
+        monkeypatch.setattr(ask_module, "INDEX_PATH", index_path, raising=False)
+        monkeypatch.setattr(ask_module, "META_PATH", meta_path, raising=False)
+        monkeypatch.setattr(ask_module, "_INDEX_CACHE", None, raising=False)
+        monkeypatch.setattr(ask_module, "_DOCS_CACHE", None, raising=False)
+        monkeypatch.setattr(ask_module, "_load_index", lambda path: object())
+
+        with pytest.raises(RuntimeError, match="legacy chunked format"):
+            ask_module._load_artifacts(refresh=True)

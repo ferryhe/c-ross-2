@@ -72,7 +72,9 @@ python ./scripts/build_index.py --source ../Knowledge_Base_MarkDown
 | 变量 | 说明 | 默认值 |
 |---|---|---|
 | `OPENAI_API_KEY` | Embedding 与问答模型使用的 API key | 必填 |
-| `MODEL` | 问答模型 | `gpt-4o` |
+| `MODEL` | 问答模型 | `gpt-4.1` |
+| `GENERAL_MODEL` | “一般”档位模型 | `gpt-4.1` |
+| `REASONING_MODEL` | “推理”档位模型 | `gpt-5.4-mini` |
 | `EMBEDDING_MODEL` | 向量模型 | `text-embedding-3-large` |
 | `RAG_MODE` | `agentic` 或 `standard` | `agentic` |
 | `OUTPUT_LANGUAGE` | 回答语言 | `zh` |
