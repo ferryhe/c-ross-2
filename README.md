@@ -29,7 +29,6 @@
 ├─ AI_Agent/                  # 问答系统、索引构建、前后端实现
 ├─ scripts/                   # 文档转换、清洗、manifest 构建脚本
 ├─ tests/                     # 转换与清洗测试
-├─ plans/                     # 规划文档
 └─ .devcontainer/             # Codespaces 配置
 ```
 

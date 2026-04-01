@@ -4,7 +4,6 @@ numpy
 tiktoken
 python-dotenv
 pytest
-streamlit
 fastapi
 uvicorn
 httpx
