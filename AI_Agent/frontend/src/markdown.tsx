@@ -3,7 +3,7 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
-import { buildSourceHeading, linkifyNumericCitations } from "./lib/citations";
+import { buildSourceHeading, prepareMarkdownForRendering } from "./lib/citations";
 import type { SourceItem } from "./types";
 
 interface MarkdownMessageProps {
@@ -12,20 +12,20 @@ interface MarkdownMessageProps {
 }
 
 export function MarkdownMessage({ markdown, sources = [] }: MarkdownMessageProps) {
-  const linkedMarkdown = linkifyNumericCitations(markdown, sources);
+  const preparedMarkdown = prepareMarkdownForRendering(markdown, sources);
 
   return (
     <div className="markdown-message">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[[rehypeKatex, { strict: "ignore", throwOnError: false }]]}
         components={{
           a: ({ node: _node, ...props }) => (
             <a {...props} target="_blank" rel="noreferrer noopener" />
           ),
         }}
       >
-        {linkedMarkdown}
+        {preparedMarkdown}
       </ReactMarkdown>
 
       {sources.length > 0 ? (

@@ -1,4 +1,4 @@
-import { buildSourceHeading, linkifyNumericCitations } from "./citations";
+import { buildSourceHeading, linkifyNumericCitations, prepareMarkdownForRendering } from "./citations";
 
 describe("linkifyNumericCitations", () => {
   it("replaces numeric citations with clickable links", () => {
@@ -32,5 +32,26 @@ describe("buildSourceHeading", () => {
         section_heading: "第二章",
       }),
     ).toBe("Knowledge_Base_MarkDown/rules/foo.md | 第二章");
+  });
+});
+
+describe("prepareMarkdownForRendering", () => {
+  it("does not linkify numeric brackets inside math segments", () => {
+    const result = prepareMarkdownForRendering("公式 $$x_{[1]} + y$$，引用见 [1]。", [
+      { index: 1, path: "a.md", url: "https://example.com/a", snippet: "A" },
+    ]);
+
+    expect(result).toContain("$$x_{[1]} + y$$");
+    expect(result).toContain("[1](https://example.com/a)");
+  });
+
+  it("normalizes likely latex OCR artifacts before rendering", () => {
+    const result = prepareMarkdownForRendering(
+      "$$\\mathrm{MC}{\\text{损失发生}} = \\operatorname { M i n}(x, y)$$",
+      [],
+    );
+
+    expect(result).toContain("\\mathrm{MC}_{\\text{损失发生}}");
+    expect(result).toContain("\\min(x, y)");
   });
 });

@@ -322,6 +322,12 @@ a {
   padding: 0.15rem 0;
 }
 
+.markdown-message .katex-error {
+  color: #a12f2f;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .source-panel {
   border-top: 1px dashed rgba(19, 37, 60, 0.16);
   padding-top: 10px;

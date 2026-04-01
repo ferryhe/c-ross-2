@@ -293,6 +293,7 @@ def get_system_prompt(language: str = "en") -> str:
         f"7. If the documents do not contain sufficient information to answer the question, reply '{INSUFFICIENT_INFO_RESPONSE}' and recommend the most relevant Markdown file to inspect.\n"
         "8. NEVER make up information or draw conclusions not directly supported by the retrieved documents.\n"
         "9. If you're uncertain about any detail, explicitly state the uncertainty.\n"
+        "10. When the answer includes formulas, output valid LaTeX wrapped in `$...$` for inline math or `$$...$$` for block math. Preserve the source formula structure instead of rewriting it as plain text.\n"
     )
 
     if language == "zh":
@@ -322,6 +323,7 @@ def format_user_prompt(question: str, context: str, history: str | None = None) 
         "like [1], [2], etc., plus its file path. Use only these documents to answer the question. "
         "When citing information, cite only the numeric tag such as [1] or [2]. Do not repeat the file path or title in the answer body. "
         "Answer directly first, then expand with the most relevant supported details. "
+        "If you include formulas, keep them as valid LaTeX using `$...$` or `$$...$$`. "
         "If the question asks for a summary, explanation, or comparison, organize the answer clearly by topic. "
         f"If there is no supporting document, reply '{INSUFFICIENT_INFO_RESPONSE}' and mention which Markdown file should be reviewed.\n\n"
         f"Retrieved documents:\n{context}\n\nQuestion: {question}"
