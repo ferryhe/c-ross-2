@@ -51,6 +51,51 @@ def test_normalize_corpus_writes_front_matter_and_assets(tmp_path):
     assert "# 正文" in text
 
 
+def test_normalize_corpus_strips_bom_and_dedupes_title_heading(tmp_path):
+    raw_root = tmp_path / "work" / "converted_raw"
+    output_root = tmp_path / "Knowledge_Base_MarkDown"
+
+    raw_file = raw_root / "偿二代二期-规则" / "监管规则第10号.md"
+    raw_file.parent.mkdir(parents=True)
+    raw_file.write_text(
+        "\ufeff# 监管规则第10号\n\n# 监管规则第10号\n\n## 第一章 总则\n\n正文",
+        encoding="utf-8",
+    )
+    raw_file.with_suffix(".meta.json").write_text(
+        json.dumps({"title": "监管规则第10号", "category": "rules"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    normalize_corpus(raw_root, output_root)
+
+    text = (output_root / "rules" / "监管规则第10号.md").read_text(encoding="utf-8")
+    assert not text.startswith("\ufeff")
+    assert text.startswith("---\n")
+    assert text.count("# 监管规则第10号") == 1
+
+
+def test_normalize_corpus_dedupes_plain_title_after_h1(tmp_path):
+    raw_root = tmp_path / "work" / "converted_raw"
+    output_root = tmp_path / "Knowledge_Base_MarkDown"
+
+    raw_file = raw_root / "偿二代二期-规则" / "监管规则第1号.md"
+    raw_file.parent.mkdir(parents=True)
+    raw_file.write_text(
+        "# 监管规则第1号\n\n监管规则第1号\n\n第一章 总则\n\n正文",
+        encoding="utf-8",
+    )
+    raw_file.with_suffix(".meta.json").write_text(
+        json.dumps({"title": "监管规则第1号", "category": "rules"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    normalize_corpus(raw_root, output_root)
+
+    text = (output_root / "rules" / "监管规则第1号.md").read_text(encoding="utf-8")
+    assert text.count("# 监管规则第1号") == 1
+    assert "\n\n监管规则第1号\n\n" not in text
+
+
 def test_build_manifest_collects_normalized_files(tmp_path):
     kb_root = tmp_path / "Knowledge_Base_MarkDown"
     kb_root.mkdir()

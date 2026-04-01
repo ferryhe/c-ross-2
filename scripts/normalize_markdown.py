@@ -53,6 +53,57 @@ LEFT_ARRAY_CASES_PATTERN = re.compile(
     re.DOTALL,
 )
 
+CASES_ENV_PATTERN = re.compile(
+    r"(?P<prefix>.*?)\\begin\{cases\}(?P<body>.*?)\\end\{cases\}(?P<suffix>.*)",
+    re.DOTALL,
+)
+
+INLINE_MATH_PATTERN = re.compile(r"(?<!\$)\$(?!\$)(?P<body>.*?)(?<!\\)\$")
+
+INLINE_PLAINIFY_BLOCKERS = (
+    r"\frac",
+    r"\sqrt",
+    r"\sum",
+    r"\times",
+    r"\left",
+    r"\right",
+    r"\begin",
+    r"\end",
+    r"\min",
+    r"\max",
+    r"\operatorname",
+    r"\in",
+    r"\le",
+    r"\ge",
+    r"\dots",
+    r"\cdot",
+    "<",
+    ">",
+)
+
+INLINE_WRAPPER_PATTERN = re.compile(r"\\(?:mathrm|mathbf|mathit|text)\s*\{([^{}]*)\}")
+INLINE_SUBSUP_BRACES_PATTERN = re.compile(r"([_^])\s*\{([^{}]+)\}")
+INLINE_SIMPLE_BRACES_PATTERN = re.compile(r"\{([^{}]+)\}")
+INLINE_SPACE_AROUND_SCRIPT_PATTERN = re.compile(r"\s*([_^,])\s*")
+INLINE_SYMBOL_TOKEN = r"[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaffα-ωΑ-ΩΔρβγμνπστυφχψω_,]+(?:\^[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff*]+)?"
+SIMPLE_PLAIN_INLINE_PATTERN = re.compile(rf"^{INLINE_SYMBOL_TOKEN}$")
+ASSIGNMENT_PLAIN_INLINE_PATTERN = re.compile(rf"^{INLINE_SYMBOL_TOKEN}\s*=\s*[-+−]?\d+(?:\.\d+)?(?:\s*%?)?$")
+RANGE_PLAIN_INLINE_PATTERN = re.compile(rf"^{INLINE_SYMBOL_TOKEN}\s*-\s*{INLINE_SYMBOL_TOKEN}$")
+
+LATEX_INLINE_REPLACEMENTS = {
+    r"\rho": "ρ",
+    r"\beta": "β",
+    r"\Delta": "Δ",
+    r"\alpha": "α",
+    r"\gamma": "γ",
+    r"\mu": "μ",
+    r"\pi": "π",
+    r"\sigma": "σ",
+    r"\tau": "τ",
+}
+
+HEADING_PATTERN = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.+?)\s*$")
+
 
 def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNOWLEDGE_BASE_ROOT) -> list[Path]:
     outputs: list[Path] = []
@@ -63,7 +114,9 @@ def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNO
         target_path = _resolve_target_path(output_root / category / raw_markdown.name)
         ensure_parent(target_path)
 
-        body = normalize_math_entities(raw_markdown.read_text(encoding="utf-8"))
+        merged_title = metadata.get("title") or raw_markdown.stem
+        body = normalize_math_entities(raw_markdown.read_text(encoding="utf-8").lstrip("\ufeff"))
+        body = _clean_body(body, merged_title)
         target_path.write_text(_render_front_matter(metadata, raw_markdown, body, category), encoding="utf-8")
 
         for asset_dir_name in metadata.get("asset_dirs", []):
@@ -80,7 +133,8 @@ def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNO
 
 
 def normalize_math_entities(markdown: str) -> str:
-    return MATH_SEGMENT_PATTERN.sub(lambda match: _decode_math_entities(match.group(0)), markdown)
+    decoded = MATH_SEGMENT_PATTERN.sub(lambda match: _decode_math_entities(match.group(0)), markdown)
+    return _plainify_inline_math_references(decoded)
 
 
 def _decode_math_entities(segment: str) -> str:
@@ -95,7 +149,70 @@ def _decode_math_entities(segment: str) -> str:
     cleaned = BROKEN_CJK_SUBSUP_WITH_INDEX_PATTERN.sub(_replace_broken_cjk_subsup_with_index, cleaned)
     cleaned = BROKEN_CJK_SUBSUP_PATTERN.sub(_replace_broken_cjk_subsup, cleaned)
     cleaned = LEFT_ARRAY_CASES_PATTERN.sub(_replace_left_array_cases, cleaned)
-    return cleaned.replace("\xa0", " ")
+    cleaned = cleaned.replace("\xa0", " ")
+    if cleaned.startswith("$$") and cleaned.endswith("$$") and r"\begin{cases}" in cleaned:
+        return _rewrite_display_cases_as_math_fence(cleaned)
+    return cleaned
+
+
+def _plainify_inline_math_references(markdown: str) -> str:
+    lines = markdown.splitlines()
+    normalized_lines: list[str] = []
+    in_fence = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            normalized_lines.append(line)
+            continue
+        if in_fence or "$$" in line or stripped.startswith("|") or _line_is_only_inline_math(line):
+            normalized_lines.append(line)
+            continue
+        normalized_lines.append(INLINE_MATH_PATTERN.sub(_replace_inline_math_reference, line))
+    return "\n".join(normalized_lines)
+
+
+def _replace_inline_math_reference(match: re.Match[str]) -> str:
+    body = match.group("body")
+    plain = _plainify_inline_math(body)
+    if plain is None:
+        return match.group(0)
+    return f"`{plain}`"
+
+
+def _plainify_inline_math(body: str) -> str | None:
+    if any(token in body for token in INLINE_PLAINIFY_BLOCKERS):
+        return None
+    candidate = body.strip().replace("\xa0", " ")
+    if not candidate:
+        return None
+    candidate = candidate.replace(r"\%", "%")
+    for latex, replacement in LATEX_INLINE_REPLACEMENTS.items():
+        candidate = candidate.replace(latex, replacement)
+    previous = None
+    while candidate != previous:
+        previous = candidate
+        candidate = INLINE_WRAPPER_PATTERN.sub(r"\1", candidate)
+        candidate = INLINE_SUBSUP_BRACES_PATTERN.sub(r"\1\2", candidate)
+        candidate = INLINE_SIMPLE_BRACES_PATTERN.sub(r"\1", candidate)
+    candidate = re.sub(r"\\([A-Za-z]+)", r"\1", candidate)
+    candidate = INLINE_SPACE_AROUND_SCRIPT_PATTERN.sub(r"\1", candidate)
+    candidate = re.sub(r"\s*=\s*", " = ", candidate)
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    if (
+        SIMPLE_PLAIN_INLINE_PATTERN.fullmatch(candidate)
+        or ASSIGNMENT_PLAIN_INLINE_PATTERN.fullmatch(candidate)
+        or RANGE_PLAIN_INLINE_PATTERN.fullmatch(candidate)
+    ):
+        return candidate
+    return None
+
+
+def _line_is_only_inline_math(line: str) -> bool:
+    if "$" not in line:
+        return False
+    remainder = INLINE_MATH_PATTERN.sub("", line)
+    return not remainder.strip()
 
 
 def _replace_broken_cjk_subsup_with_index(match: re.Match[str]) -> str:
@@ -114,6 +231,35 @@ def _replace_broken_cjk_subsup(match: re.Match[str]) -> str:
 def _replace_left_array_cases(match: re.Match[str]) -> str:
     body = match.group("body").strip()
     return f"\\begin{{cases}} {body} \\end{{cases}}"
+
+
+def _rewrite_display_cases_as_math_fence(segment: str) -> str:
+    body = segment[2:-2].strip()
+    normalized = CASES_ENV_PATTERN.sub(_format_cases_environment, body)
+    return f"```math\n{normalized}\n```"
+
+
+def _format_cases_environment(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    body = match.group("body").strip()
+    suffix = match.group("suffix").lstrip()
+    rows = [row.strip() for row in re.split(r"\s*\\\\\s*", body) if row.strip()]
+    rendered_body = "\n".join(
+        f"{row} \\\\" if index < len(rows) - 1 else row
+        for index, row in enumerate(rows)
+    )
+    pieces = []
+    if prefix:
+        pieces.append(f"{prefix}\\begin{{cases}}")
+    else:
+        pieces.append(r"\begin{cases}")
+    if rendered_body:
+        pieces.append(rendered_body)
+    end_line = r"\end{cases}"
+    if suffix:
+        end_line = f"{end_line} {suffix}"
+    pieces.append(end_line)
+    return "\n".join(pieces)
 
 
 def _resolve_target_path(candidate: Path) -> Path:
@@ -156,6 +302,90 @@ def _yaml_scalar(value: object) -> str:
         return ""
     if any(char in text for char in [":", "#", "\n", '"']) or text.startswith(" ") or text.endswith(" "):
         return json.dumps(text, ensure_ascii=False)
+    return text
+
+
+def _clean_body(text: str, title: str) -> str:
+    cleaned = _dedupe_consecutive_identical_headings(text)
+    cleaned = _dedupe_leading_title_heading(cleaned, title)
+    return cleaned
+
+
+def _dedupe_consecutive_identical_headings(text: str) -> str:
+    lines = text.splitlines()
+    rendered: list[str] = []
+    pending_blanks: list[str] = []
+    previous_heading: tuple[str, str] | None = None
+    only_blank_since_heading = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            pending_blanks.append(line)
+            continue
+        heading_match = HEADING_PATTERN.match(stripped)
+        if heading_match:
+            key = (heading_match.group("level"), heading_match.group("title"))
+            if previous_heading == key and only_blank_since_heading:
+                pending_blanks.clear()
+                continue
+            rendered.extend(pending_blanks)
+            pending_blanks.clear()
+            rendered.append(line)
+            previous_heading = key
+            only_blank_since_heading = True
+            continue
+        rendered.extend(pending_blanks)
+        pending_blanks.clear()
+        rendered.append(line)
+        only_blank_since_heading = False
+
+    rendered.extend(pending_blanks)
+    return "\n".join(rendered)
+
+
+def _dedupe_leading_title_heading(text: str, title: str) -> str:
+    lines = text.splitlines()
+    first_heading_index = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("_Note:"):
+            continue
+        match = HEADING_PATTERN.match(stripped)
+        if not match:
+            return text
+        if match.group("level") != "#":
+            return text
+        first_heading_index = index
+        break
+    if first_heading_index is None:
+        return text
+
+    normalized_title = title.strip()
+    first_heading = HEADING_PATTERN.match(lines[first_heading_index].strip())
+    if not first_heading or first_heading.group("title").strip() != normalized_title:
+        return text
+
+    next_index = first_heading_index + 1
+    while next_index < len(lines) and not lines[next_index].strip():
+        next_index += 1
+    if next_index >= len(lines):
+        return text
+
+    next_line = lines[next_index].strip()
+    next_heading = HEADING_PATTERN.match(next_line)
+    if next_heading and next_heading.group("level") == "#" and next_heading.group("title").strip() == normalized_title:
+        del lines[next_index]
+        while next_index < len(lines) and not lines[next_index].strip():
+            del lines[next_index]
+        return "\n".join(lines)
+    if next_line == normalized_title:
+        del lines[next_index]
+        while next_index < len(lines) and not lines[next_index].strip():
+            del lines[next_index]
+        return "\n".join(lines)
     return text
 
 

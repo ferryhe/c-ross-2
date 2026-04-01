@@ -12,6 +12,7 @@ from typing import Any
 
 import faiss
 import numpy as np
+import tiktoken
 from openai import OpenAI
 
 # Add parent directory to path for local imports when executed as a script.
@@ -20,6 +21,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from agentic_rag import AgenticRagEngine
+from build_index import derive_section_index_path, derive_section_meta_path
 from project_config import DEFAULT_OUTPUT_LANGUAGE, KNOWLEDGE_BASE_NAME, load_project_env
 from query_enhancements import rerank_hits
 from utils import retry_with_exponential_backoff
@@ -29,13 +31,15 @@ REPO_ROOT = PROJECT_ROOT.parent
 
 load_project_env(PROJECT_ROOT)
 
-MODEL = os.getenv("MODEL", "gpt-4o")
+MODEL = os.getenv("MODEL", "gpt-4.1")
 EMB_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 DEFAULT_MODE = os.getenv("RAG_MODE", "agentic")
-DEFAULT_TOP_K = int(os.getenv("TOP_K", "8"))
+DEFAULT_TOP_K = int(os.getenv("TOP_K", "4"))
 DEFAULT_SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.0"))
 DEFAULT_MAX_ITERATIONS = int(os.getenv("AGENTIC_MAX_ITERATIONS", "2"))
 DEFAULT_SYNTHESIS_TOP_K = os.getenv("AGENTIC_SYNTHESIS_TOP_K")
+DEFAULT_DOC_CONTEXT_TOKENS = int(os.getenv("DOC_CONTEXT_TOKENS", "120000"))
+DEFAULT_SECTION_CONTEXT_TOKENS = int(os.getenv("SECTION_CONTEXT_TOKENS", "16000"))
 DEFAULT_LANGUAGE = os.getenv("OUTPUT_LANGUAGE", DEFAULT_OUTPUT_LANGUAGE)
 INSUFFICIENT_INFO_RESPONSE = "I don't have enough information to answer this question."
 RULE_NUMBER_PATTERN = re.compile(r"\u89c4\u5219\u7b2c(\d+)\u53f7")
@@ -53,6 +57,48 @@ COUNT_SCOPE_MARKERS = (
     "\u9644\u4ef6",
     "\u901a\u77e5",
 )
+SECTION_QUERY_MARKERS = (
+    "\u516c\u5f0f",
+    "\u6761",
+    "\u6b3e",
+    "\u8868",
+    "\u8868\u683c",
+    "\u540d\u5355",
+    "\u9636\u6bb5",
+    "\u66f2\u7ebf",
+    "\u60c5\u666f",
+    "\u56e0\u5b50",
+    "\u7cfb\u6570",
+    "\u9608\u503c",
+    "\u4e0a\u9650",
+    "\u4e0b\u9650",
+    "\u6bd4\u4f8b",
+    "\u53d6\u503c",
+    "\u5b9a\u4e49",
+    "\u600e\u4e48\u8ba1\u7b97",
+    "\u8ba1\u7b97\u516c\u5f0f",
+)
+DOCUMENT_QUERY_MARKERS = (
+    "\u4e3b\u8981\u5185\u5bb9",
+    "\u4e3b\u8981\u6d89\u53ca",
+    "\u6982\u89c8",
+    "\u6982\u8981",
+    "\u603b\u7ed3",
+    "\u4ecb\u7ecd",
+    "\u6982\u62ec",
+    "\u8bb2\u4ec0\u4e48",
+    "\u9002\u7528\u8303\u56f4",
+)
+HYBRID_QUERY_MARKERS = (
+    "\u6bd4\u8f83",
+    "\u5bf9\u6bd4",
+    "\u533a\u522b",
+    "\u5173\u7cfb",
+    "\u8054\u7cfb",
+    "\u5206\u522b",
+    "\u540c\u65f6",
+    "\u7efc\u5408",
+)
 
 
 def _resolve_path(value: str | None, default: Path) -> Path:
@@ -69,11 +115,39 @@ META_PATH = _resolve_path(os.getenv("META_PATH"), PROJECT_ROOT / "knowledge_base
 MANIFEST_PATH = _resolve_path(os.getenv("MANIFEST_PATH"), REPO_ROOT / "Knowledge_Base_MarkDown" / "manifest.json")
 _INDEX_CACHE = None
 _DOCS_CACHE = None
+_SECTION_INDEX_CACHE = None
+_SECTION_DOCS_CACHE = None
 _MANIFEST_CACHE = None
+_ENCODER = None
 
 
 def _normalize_path(path: str) -> str:
     return path.replace("\\", "/").lower()
+
+
+def _section_index_path() -> Path:
+    env_value = os.getenv("SECTION_INDEX_PATH")
+    if env_value:
+        return _resolve_path(env_value, derive_section_index_path(INDEX_PATH))
+    return derive_section_index_path(INDEX_PATH).resolve()
+
+
+def _section_meta_path() -> Path:
+    env_value = os.getenv("SECTION_META_PATH")
+    if env_value:
+        return _resolve_path(env_value, derive_section_meta_path(META_PATH))
+    return derive_section_meta_path(META_PATH).resolve()
+
+
+def get_index_artifact_paths() -> tuple[Path, Path, Path, Path]:
+    return INDEX_PATH, META_PATH, _section_index_path(), _section_meta_path()
+
+
+def _get_encoder():
+    global _ENCODER
+    if _ENCODER is None:
+        _ENCODER = tiktoken.get_encoding("cl100k_base")
+    return _ENCODER
 
 
 def _normalize_match_text(value: str) -> str:
@@ -81,7 +155,26 @@ def _normalize_match_text(value: str) -> str:
 
 
 def _extract_filename_hints(question: str) -> list[str]:
-    return re.findall(r"(第\d+号|附件\d+(?:-\d+)?)", question)
+    return re.findall(r"(规则第\d+号|第\d+号|附件\d+(?:-\d+)?)", question)
+
+
+def classify_retrieval_strategy(question: str) -> str:
+    normalized = question.replace(" ", "")
+
+    if any(marker in normalized for marker in HYBRID_QUERY_MARKERS):
+        return "hybrid"
+
+    has_document_marker = any(marker in normalized for marker in DOCUMENT_QUERY_MARKERS)
+    has_section_marker = any(marker in normalized for marker in SECTION_QUERY_MARKERS)
+
+    if has_document_marker and not has_section_marker:
+        return "document"
+    if has_section_marker and not has_document_marker:
+        return "section"
+    if has_document_marker and has_section_marker:
+        return "hybrid"
+
+    return "hybrid"
 
 
 def _collect_filename_match_hits(
@@ -107,10 +200,17 @@ def _collect_filename_match_hits(
         if not stem_norm:
             continue
 
+        stem_hints = set(_extract_filename_hints(stem))
+        numbered_hints = [hint for hint in hints if any(char.isdigit() for char in hint)]
+        exact_number_match = any(hint in stem for hint in numbered_hints)
+
+        if numbered_hints and stem_hints and not exact_number_match:
+            continue
+
         score = 0.0
         for hint in hints:
             if hint in stem:
-                score += 10.0
+                score += 50.0
 
         if question_norm and question_norm in stem_norm:
             score += float(len(question_norm))
@@ -137,7 +237,7 @@ def _collect_filename_match_hits(
             direct_hits.append(
                 {
                     **item,
-                    "retrieval_score": max(float(item.get("retrieval_score", 0.0)), min(0.99, 0.50 + score / 100.0)),
+                    "retrieval_score": max(float(item.get("retrieval_score", 0.0)), 1.5 + score / 100.0),
                 }
             )
     return direct_hits
@@ -157,10 +257,10 @@ def _legacy_get_system_prompt(language: str = "en") -> str:
     base_prompt = (
         f"You are the documentation expert for the {KNOWLEDGE_BASE_NAME}. "
         "CRITICAL INSTRUCTIONS:\n"
-        "1. Answer ONLY using information from the retrieved snippets provided below.\n"
-        "2. Every claim must cite evidence using the snippet number and file path in the format `[n] path/to/file.md`.\n"
+        "1. Answer ONLY using information from the retrieved documents provided below.\n"
+        "2. Every claim must cite evidence using only the numeric document tag in the format `[n]`.\n"
         "3. Structure answers with a short summary followed by bullet points of supporting evidence.\n"
-        "4. If the snippets do not contain sufficient information to answer the question, you MUST reply 'I don't have enough information to answer this question.' "
+        "4. If the documents do not contain sufficient information to answer the question, you MUST reply 'I don't have enough information to answer this question.' "
         "and recommend the most relevant Markdown file to inspect.\n"
         "5. NEVER make up information or draw conclusions not directly supported by the snippets.\n"
         "6. If you're uncertain about any detail, explicitly state your uncertainty.\n"
@@ -184,12 +284,16 @@ def get_system_prompt(language: str = "en") -> str:
     base_prompt = (
         f"You are the documentation expert for the {KNOWLEDGE_BASE_NAME}. "
         "CRITICAL INSTRUCTIONS:\n"
-        "1. Answer ONLY using information from the retrieved snippets provided below.\n"
-        "2. Every claim must cite evidence using the snippet number and file path in the format `[n] path/to/file.md`.\n"
-        "3. Structure answers with a short summary followed by bullet points of supporting evidence.\n"
-        f"4. If the snippets do not contain sufficient information to answer the question, reply '{INSUFFICIENT_INFO_RESPONSE}' and recommend the most relevant Markdown file to inspect.\n"
-        "5. NEVER make up information or draw conclusions not directly supported by the snippets.\n"
-        "6. If you're uncertain about any detail, explicitly state your uncertainty.\n"
+        "1. Answer ONLY using information from the retrieved documents provided below.\n"
+        "2. Every claim must cite evidence using only the numeric document tag in the format `[n]`.\n"
+        "3. Start with a direct answer, then provide a fuller, research-style explanation organized by theme when the evidence supports it.\n"
+        "4. Prefer complete answers over minimal ones. Include relevant definitions, scope, formulas, conditions, thresholds, exceptions, reporting requirements, and cross-document links when they are directly supported.\n"
+        "5. If the user asks for a summary, overview, or '主要内容', synthesize the whole retrieved document set instead of listing isolated fragments.\n"
+        "6. Use prior conversation only as conversational context. Do not rely on anything from prior turns unless it is also supported by the retrieved documents in the current turn.\n"
+        f"7. If the documents do not contain sufficient information to answer the question, reply '{INSUFFICIENT_INFO_RESPONSE}' and recommend the most relevant Markdown file to inspect.\n"
+        "8. NEVER make up information or draw conclusions not directly supported by the retrieved documents.\n"
+        "9. If you're uncertain about any detail, explicitly state the uncertainty.\n"
+        "10. When the answer includes formulas, output valid LaTeX wrapped in `$...$` for inline math or `$$...$$` for block math. Preserve the source formula structure instead of rewriting it as plain text.\n"
     )
 
     if language == "zh":
@@ -209,14 +313,20 @@ def get_system_prompt(language: str = "en") -> str:
 def format_user_prompt(question: str, context: str, history: str | None = None) -> str:
     history_block = ""
     if history:
-        history_block = f"Prior conversation:\n{history}\n\n"
+        history_block = (
+            "Prior conversation (use only as conversational context, not as evidence):\n"
+            f"{history}\n\n"
+        )
     return (
         history_block
-        + f"You will receive Markdown excerpts from the {KNOWLEDGE_BASE_NAME}. Each excerpt already includes a numeric tag "
-        "like [1], [2], etc., plus its file path. Use only these excerpts to answer the question. "
-        "When citing information, reuse the same numeric tag and file path so the reader can trace the source. "
-        f"If there is no supporting excerpt, reply '{INSUFFICIENT_INFO_RESPONSE}' and mention which Markdown file should be reviewed.\n\n"
-        f"Retrieved snippets:\n{context}\n\nQuestion: {question}"
+        + f"You will receive full Markdown documents from the {KNOWLEDGE_BASE_NAME}. Each document already includes a numeric tag "
+        "like [1], [2], etc., plus its file path. Use only these documents to answer the question. "
+        "When citing information, cite only the numeric tag such as [1] or [2]. Do not repeat the file path or title in the answer body. "
+        "Answer directly first, then expand with the most relevant supported details. "
+        "If you include formulas, keep them as valid LaTeX using `$...$` or `$$...$$`. "
+        "If the question asks for a summary, explanation, or comparison, organize the answer clearly by topic. "
+        f"If there is no supporting document, reply '{INSUFFICIENT_INFO_RESPONSE}' and mention which Markdown file should be reviewed.\n\n"
+        f"Retrieved documents:\n{context}\n\nQuestion: {question}"
     )
 
 
@@ -228,6 +338,22 @@ def _load_index(path: Path):
             buf = fh.read()
         arr = np.frombuffer(buf, dtype="uint8")
         return faiss.deserialize_index(arr)
+
+
+def _validate_doc_metadata(docs: list[dict[str, Any]]) -> None:
+    if any("token_count" not in doc or "title" not in doc for doc in docs):
+        raise RuntimeError(
+            "The current vector store was built with the legacy chunked format. "
+            "Re-run scripts/build_index.py to rebuild the document-level index."
+        )
+
+
+def _validate_section_metadata(docs: list[dict[str, Any]]) -> None:
+    if any("section_heading" not in doc or "section_kind" not in doc for doc in docs):
+        raise RuntimeError(
+            "The current section vector store is missing structured section metadata. "
+            "Re-run scripts/build_index.py to rebuild the hybrid document/section indexes."
+        )
 
 
 def _load_manifest(refresh: bool = False) -> list[dict[str, Any]]:
@@ -265,13 +391,38 @@ def _load_artifacts(refresh: bool = False):
         _INDEX_CACHE = _load_index(INDEX_PATH)
         with META_PATH.open("rb") as fh:
             _DOCS_CACHE = pickle.load(fh)
+        _validate_doc_metadata(_DOCS_CACHE)
 
     return _INDEX_CACHE, _DOCS_CACHE
+
+
+def _load_section_artifacts(refresh: bool = False, *, required: bool = False):
+    global _SECTION_INDEX_CACHE, _SECTION_DOCS_CACHE
+
+    section_index_path = _section_index_path()
+    section_meta_path = _section_meta_path()
+
+    if not section_index_path.exists() or not section_meta_path.exists():
+        if required:
+            raise FileNotFoundError(
+                "Missing section vector store files. Run scripts/build_index.py first.\n"
+                f"Expected:\n  {section_index_path}\n  {section_meta_path}"
+            )
+        return None, []
+
+    if refresh or _SECTION_INDEX_CACHE is None or _SECTION_DOCS_CACHE is None:
+        _SECTION_INDEX_CACHE = _load_index(section_index_path)
+        with section_meta_path.open("rb") as fh:
+            _SECTION_DOCS_CACHE = pickle.load(fh)
+        _validate_section_metadata(_SECTION_DOCS_CACHE)
+
+    return _SECTION_INDEX_CACHE, _SECTION_DOCS_CACHE
 
 
 def refresh_cache():
     """Reload FAISS and metadata, useful after re-building the index."""
     _load_artifacts(refresh=True)
+    _load_section_artifacts(refresh=True, required=False)
 
 
 def refresh_manifest_cache():
@@ -279,7 +430,7 @@ def refresh_manifest_cache():
 
 
 def get_document_snippets(doc_path: str, limit: int | None = None):
-    """Return FAISS metadata chunks for a specific Markdown path."""
+    """Return FAISS metadata records for a specific Markdown path."""
     _, docs = _load_artifacts()
     target = _normalize_path(doc_path)
     matches = [doc for doc in docs if _normalize_path(doc["path"]).endswith(target)]
@@ -381,38 +532,105 @@ def _create_embedding(client: OpenAI, text: str) -> list[float]:
 
 
 @retry_with_exponential_backoff(max_retries=3, initial_delay=2.0)
-def _create_chat_completion(client: OpenAI, messages: list[dict], temperature: float = 0.2) -> str:
+def _create_chat_completion(
+    client: OpenAI,
+    messages: list[dict],
+    temperature: float = 0.2,
+    *,
+    model: str | None = None,
+) -> str:
     """Create chat completion with retry logic."""
     response = client.chat.completions.create(
-        model=MODEL,
+        model=model or MODEL,
         messages=messages,
         temperature=temperature,
     )
     return response.choices[0].message.content
 
 
-def retrieve(
+def _estimate_text_tokens(text: str) -> int:
+    return len(_get_encoder().encode(text))
+
+
+def _invoke_chat_completion(
     client: OpenAI,
+    messages: list[dict],
+    *,
+    temperature: float = 0.2,
+    model: str | None = None,
+) -> str:
+    if model:
+        return _create_chat_completion(client, messages, temperature=temperature, model=model)
+    return _create_chat_completion(client, messages, temperature=temperature)
+
+
+def _hit_token_count(hit: dict[str, Any]) -> int:
+    token_count = hit.get("token_count")
+    if isinstance(token_count, int) and token_count > 0:
+        return token_count
+    return _estimate_text_tokens(str(hit.get("text", "")))
+
+
+def prepare_answer_hits(
     question: str,
-    k: int = DEFAULT_TOP_K,
-    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
-):
-    """
-    Retrieve relevant document chunks using vector similarity search.
+    hits: list[dict],
+    *,
+    max_context_tokens: int = DEFAULT_DOC_CONTEXT_TOKENS,
+    section_context_tokens: int = DEFAULT_SECTION_CONTEXT_TOKENS,
+) -> list[dict]:
+    if not hits:
+        return []
 
-    Args:
-        client: OpenAI client instance
-        question: User's query
-        k: Number of top results to return
-        similarity_threshold: Minimum cosine similarity score (0.0-1.0)
+    def select_hits_with_budget(items: list[dict], budget: int, max_hits: int | None = None) -> list[dict]:
+        selected: list[dict] = []
+        total_tokens = 0
+        for hit in items:
+            hit_tokens = _hit_token_count(hit)
+            if selected and total_tokens + hit_tokens > budget:
+                continue
+            selected.append(hit)
+            total_tokens += hit_tokens
+            if total_tokens >= budget:
+                break
+            if max_hits is not None and len(selected) >= max_hits:
+                break
+        return selected
 
-    Returns:
-        List of document chunks with metadata, filtered by similarity threshold
-    """
+    doc_hits = rerank_hits(
+        question,
+        [hit for hit in hits if hit.get("source_kind") != "section"],
+        top_k=len([hit for hit in hits if hit.get("source_kind") != "section"]),
+    )
+    section_hits = rerank_hits(
+        question,
+        [hit for hit in hits if hit.get("source_kind") == "section"],
+        top_k=len([hit for hit in hits if hit.get("source_kind") == "section"]),
+    )
 
-    index, docs = _load_artifacts()
+    if section_hits and doc_hits:
+        selected = select_hits_with_budget(doc_hits, max_context_tokens, max_hits=3)
+        selected.extend(select_hits_with_budget(section_hits, section_context_tokens, max_hits=6))
+        if selected:
+            return rerank_hits(question, selected, top_k=len(selected))
 
-    query_vec = _create_embedding(client, question)
+    prioritized = section_hits or doc_hits
+    budget = section_context_tokens if section_hits and not doc_hits else max_context_tokens
+    selected = select_hits_with_budget(prioritized, budget)
+    if selected:
+        return selected
+    return prioritized[:1]
+
+
+def _search_hits(
+    question: str,
+    query_vec: list[float],
+    index: Any,
+    docs: list[dict],
+    *,
+    k: int,
+    similarity_threshold: float,
+    include_direct_matches: bool = True,
+) -> list[dict]:
     query_array = np.array([query_vec], dtype="float32")
     faiss.normalize_L2(query_array)
 
@@ -424,19 +642,159 @@ def retrieve(
         if 0 <= item_index < len(docs) and score >= similarity_threshold:
             results.append({**docs[item_index], "retrieval_score": float(score)})
 
-    seen = {(item["path"], item["text"]) for item in results}
-    for hit in _collect_filename_match_hits(question, docs):
-        key = (hit["path"], hit["text"])
-        if key in seen:
-            continue
-        seen.add(key)
-        results.append(hit)
+    if include_direct_matches:
+        seen = {(item["path"], item["text"]): index for index, item in enumerate(results)}
+        for hit in _collect_filename_match_hits(question, docs):
+            key = (hit["path"], hit["text"])
+            if key in seen:
+                results[seen[key]]["retrieval_score"] = max(
+                    float(results[seen[key]].get("retrieval_score", 0.0)),
+                    float(hit.get("retrieval_score", 0.0)),
+                )
+                continue
+            seen[key] = len(results)
+            results.append(hit)
 
     return rerank_hits(question, results, top_k=k)
 
 
+def retrieve_documents(
+    client: OpenAI,
+    question: str,
+    *,
+    query_vec: list[float] | None = None,
+    k: int = DEFAULT_TOP_K,
+    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+) -> list[dict]:
+    index, docs = _load_artifacts()
+    query_vec = query_vec or _create_embedding(client, question)
+    return _search_hits(
+        question,
+        query_vec,
+        index,
+        docs,
+        k=k,
+        similarity_threshold=similarity_threshold,
+        include_direct_matches=True,
+    )
+
+
+def retrieve_sections(
+    client: OpenAI,
+    question: str,
+    *,
+    query_vec: list[float] | None = None,
+    k: int = DEFAULT_TOP_K,
+    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+) -> list[dict]:
+    index, docs = _load_section_artifacts(required=False)
+    if index is None or not docs:
+        return []
+    query_vec = query_vec or _create_embedding(client, question)
+    return _search_hits(
+        question,
+        query_vec,
+        index,
+        docs,
+        k=k,
+        similarity_threshold=similarity_threshold,
+        include_direct_matches=True,
+    )
+
+
+def merge_retrieval_hits(
+    question: str,
+    document_hits: list[dict],
+    section_hits: list[dict],
+    *,
+    top_k: int,
+) -> list[dict]:
+    combined: list[dict] = []
+    seen: dict[tuple[str, str], int] = {}
+
+    for hit in [*document_hits, *section_hits]:
+        key = (str(hit.get("path", "")), str(hit.get("text", "")))
+        if key in seen:
+            existing = combined[seen[key]]
+            existing["retrieval_score"] = max(
+                float(existing.get("retrieval_score", 0.0)),
+                float(hit.get("retrieval_score", 0.0)),
+            )
+            continue
+        seen[key] = len(combined)
+        combined.append(hit)
+
+    return rerank_hits(question, combined, top_k=min(top_k, len(combined)))
+
+
+def retrieve(
+    client: OpenAI,
+    question: str,
+    k: int = DEFAULT_TOP_K,
+    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+):
+    """
+    Retrieve relevant evidence using a hybrid document/section strategy.
+    """
+
+    strategy = classify_retrieval_strategy(question)
+    query_vec = _create_embedding(client, question)
+
+    if strategy == "document":
+        return retrieve_documents(
+            client,
+            question,
+            query_vec=query_vec,
+            k=max(4, k),
+            similarity_threshold=similarity_threshold,
+        )
+
+    if strategy == "section":
+        section_hits = retrieve_sections(
+            client,
+            question,
+            query_vec=query_vec,
+            k=max(6, k * 2),
+            similarity_threshold=similarity_threshold,
+        )
+        document_hits = retrieve_documents(
+            client,
+            question,
+            query_vec=query_vec,
+            k=2,
+            similarity_threshold=similarity_threshold,
+        )
+        if not section_hits:
+            return document_hits[:k]
+        return merge_retrieval_hits(question, document_hits[:1], section_hits, top_k=max(6, k * 2))
+
+    document_hits = retrieve_documents(
+        client,
+        question,
+        query_vec=query_vec,
+        k=max(4, k),
+        similarity_threshold=similarity_threshold,
+    )
+    section_hits = retrieve_sections(
+        client,
+        question,
+        query_vec=query_vec,
+        k=max(6, k * 2),
+        similarity_threshold=similarity_threshold,
+    )
+    if not section_hits:
+        return document_hits[:k]
+    return merge_retrieval_hits(question, document_hits[:3], section_hits[:6], top_k=max(8, k * 2))
+
+
 def render_context(hits: list[dict]) -> str:
-    return "\n\n".join(f"[{index + 1}] {hit['path']}\n{hit['text']}" for index, hit in enumerate(hits))
+    formatted = []
+    for index, hit in enumerate(hits, start=1):
+        header = hit["path"]
+        if hit.get("source_kind") == "section":
+            header += f" | {hit.get('section_heading', 'Section')}"
+        formatted.append(f"[{index}] {header}\n{hit['text']}")
+    return "\n\n".join(formatted)
 
 
 def answer_from_hits(
@@ -446,15 +804,19 @@ def answer_from_hits(
     *,
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
+    model: str | None = None,
 ) -> str:
     if not hits:
+        return INSUFFICIENT_INFO_RESPONSE
+    answer_hits = prepare_answer_hits(question, hits)
+    if not answer_hits:
         return INSUFFICIENT_INFO_RESPONSE
 
     messages = [
         {"role": "system", "content": get_system_prompt(language)},
-        {"role": "user", "content": format_user_prompt(question, render_context(hits), history)},
+        {"role": "user", "content": format_user_prompt(question, render_context(answer_hits), history)},
     ]
-    return _create_chat_completion(client, messages)
+    return _invoke_chat_completion(client, messages, model=model)
 
 
 def run_standard_query(
@@ -463,18 +825,20 @@ def run_standard_query(
     *,
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
+    model: str | None = None,
     k: int = DEFAULT_TOP_K,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> dict[str, Any]:
     hits = retrieve(client, question, k=k, similarity_threshold=similarity_threshold)
-    answer = answer_from_hits(client, question, hits, language=language, history=history)
+    answer_hits = prepare_answer_hits(question, hits)
+    answer = answer_from_hits(client, question, answer_hits, language=language, history=history, model=model)
     return {
         "mode": "standard",
         "answer": answer,
-        "hits": hits,
+        "hits": answer_hits,
         "sub_queries": [question],
-        "executed_queries": [question] if hits else [],
-        "iterations": 1 if hits else 0,
+        "executed_queries": [question] if answer_hits else [],
+        "iterations": 1 if answer_hits else 0,
         "reflection_notes": [],
         "retrieval_history": [],
     }
@@ -486,12 +850,18 @@ def run_agentic_query(
     *,
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
+    model: str | None = None,
     k: int = 4,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> dict[str, Any]:
     engine = AgenticRagEngine(
-        chat_fn=lambda messages, temperature=0.2: _create_chat_completion(client, messages, temperature),
+        chat_fn=lambda messages, temperature=0.2: _invoke_chat_completion(
+            client,
+            messages,
+            temperature=temperature,
+            model=model,
+        ),
         retrieve_fn=lambda query, round_k, threshold: retrieve(
             client,
             query,
@@ -504,18 +874,20 @@ def run_agentic_query(
             hits,
             language=response_language,
             history=conversation_history,
+            model=model,
         ),
         language=language,
         max_iterations=max_iterations,
         top_k=k,
         similarity_threshold=similarity_threshold,
-        synthesis_top_k=int(DEFAULT_SYNTHESIS_TOP_K) if DEFAULT_SYNTHESIS_TOP_K else None,
+        synthesis_top_k=int(DEFAULT_SYNTHESIS_TOP_K) if DEFAULT_SYNTHESIS_TOP_K else max(k, min(10, k * 2)),
     )
     result = engine.run(question, history=history)
+    answer_hits = prepare_answer_hits(question, result.hits)
     return {
         "mode": "agentic",
         "answer": result.answer,
-        "hits": result.hits,
+        "hits": answer_hits,
         "sub_queries": result.sub_queries,
         "executed_queries": result.executed_queries,
         "iterations": result.iterations,
@@ -531,6 +903,7 @@ def run_query(
     mode: str = DEFAULT_MODE,
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
+    model: str | None = None,
     k: int = DEFAULT_TOP_K,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -545,6 +918,7 @@ def run_query(
             question,
             language=language,
             history=history,
+            model=model,
             k=k,
             similarity_threshold=similarity_threshold,
         )
@@ -553,6 +927,7 @@ def run_query(
         question,
         language=language,
         history=history,
+        model=model,
         k=k,
         similarity_threshold=similarity_threshold,
         max_iterations=max_iterations,
