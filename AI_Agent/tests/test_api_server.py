@@ -16,6 +16,13 @@ import api_server
 client = TestClient(api_server.app)
 
 
+def test_normalize_model_mode_falls_back_to_general():
+    assert api_server._normalize_model_mode("general") == "general"
+    assert api_server._normalize_model_mode("reasoning") == "reasoning"
+    assert api_server._normalize_model_mode("invalid-mode") == "general"
+    assert api_server._normalize_model_mode("") == "general"
+
+
 def test_healthz_reports_service_flags(monkeypatch):
     monkeypatch.setattr(api_server, "_has_real_openai_api_key", lambda: True)
     monkeypatch.setattr(api_server, "_index_artifacts_ready", lambda: True)

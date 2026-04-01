@@ -33,9 +33,19 @@ from scripts.ask import (
     run_query,
 )
 
+VALID_MODEL_MODES = {"general", "reasoning"}
+
+
+def _normalize_model_mode(value: str | None) -> Literal["general", "reasoning"]:
+    candidate = (value or "").strip().lower()
+    if candidate in VALID_MODEL_MODES:
+        return candidate  # type: ignore[return-value]
+    return "general"
+
+
 DEFAULT_GENERAL_MODEL = os.getenv("GENERAL_MODEL", "gpt-4.1")
 DEFAULT_REASONING_MODEL = os.getenv("REASONING_MODEL", "gpt-5.4-mini")
-DEFAULT_MODEL_MODE = os.getenv("DEFAULT_MODEL_MODE", "general")
+DEFAULT_MODEL_MODE = _normalize_model_mode(os.getenv("DEFAULT_MODEL_MODE", "general"))
 
 
 class ChatMessage(BaseModel):
@@ -48,7 +58,10 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     messages: list[ChatMessage]
-    model_mode: Literal["general", "reasoning"] = Field(default=DEFAULT_MODEL_MODE, alias="modelMode")
+    model_mode: Literal["general", "reasoning"] = Field(
+        default=_normalize_model_mode(DEFAULT_MODEL_MODE),
+        alias="modelMode",
+    )
     language: Literal["zh", "en"] = DEFAULT_LANGUAGE if DEFAULT_LANGUAGE in {"zh", "en"} else "zh"
     rag_mode: Literal["agentic", "standard"] = Field(
         default=DEFAULT_MODE if DEFAULT_MODE in {"agentic", "standard"} else "agentic",
