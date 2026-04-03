@@ -32,6 +32,13 @@ from scripts.ask import (
     get_index_artifact_paths,
     run_query,
 )
+from scripts.regulatory_engine import (
+    build_engine_config,
+    plan_regulatory_query,
+    run_regulatory_query,
+    search_summaries,
+    search_titles,
+)
 
 VALID_MODEL_MODES = {"general", "reasoning"}
 
@@ -85,6 +92,47 @@ class ChatResponse(BaseModel):
     model_mode: str
     language: str
     rag_mode: str
+
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: int = 5
+
+
+class CatalogHitResponse(BaseModel):
+    doc_id: str
+    path: str
+    title: str
+    category: str
+    score: float
+    reason: str
+    summary_short: str
+    aliases: list[str]
+
+
+class SearchResponse(BaseModel):
+    query: str
+    hits: list[CatalogHitResponse]
+
+
+class EnginePlanResponse(BaseModel):
+    question: str
+    question_type: str
+    retrieval_strategy: str
+    scoped_queries: list[str]
+    recommended_paths: list[str]
+    title_hits: list[CatalogHitResponse]
+    summary_hits: list[CatalogHitResponse]
+
+
+class EngineChatResponse(ChatResponse):
+    engine_mode: str
+    question_type: str
+    retrieval_strategy: str
+    scoped_queries: list[str]
+    recommended_paths: list[str]
+    title_hits: list[CatalogHitResponse]
+    summary_hits: list[CatalogHitResponse]
 
 
 def _has_real_openai_api_key() -> bool:
@@ -226,6 +274,22 @@ def _sources_from_hits(hits: list[dict[str, Any]]) -> list[SourceItem]:
     return sources
 
 
+def _catalog_hits_response(hits: list[dict[str, Any]]) -> list[CatalogHitResponse]:
+    return [
+        CatalogHitResponse(
+            doc_id=str(hit.get("doc_id", "")),
+            path=str(hit.get("path", "")),
+            title=str(hit.get("title", "")),
+            category=str(hit.get("category", "")),
+            score=float(hit.get("score", 0.0)),
+            reason=str(hit.get("reason", "")),
+            summary_short=str(hit.get("summary_short", "")),
+            aliases=[str(item) for item in hit.get("aliases", []) if str(item).strip()],
+        )
+        for hit in hits
+    ]
+
+
 app = FastAPI(title=KNOWLEDGE_BASE_NAME)
 
 
@@ -250,6 +314,38 @@ def get_config() -> dict[str, Any]:
         },
         "rag_mode": DEFAULT_MODE,
     }
+
+
+@app.get("/api/engine/config")
+def get_engine_config() -> dict[str, Any]:
+    return build_engine_config()
+
+
+@app.post("/api/engine/search/titles", response_model=SearchResponse)
+def engine_search_titles(request: SearchRequest) -> SearchResponse:
+    hits = search_titles(request.query, limit=max(1, min(request.limit, 10)))
+    return SearchResponse(query=request.query, hits=_catalog_hits_response(hits))
+
+
+@app.post("/api/engine/search/summaries", response_model=SearchResponse)
+def engine_search_summaries(request: SearchRequest) -> SearchResponse:
+    hits = search_summaries(request.query, limit=max(1, min(request.limit, 10)))
+    return SearchResponse(query=request.query, hits=_catalog_hits_response(hits))
+
+
+@app.post("/api/engine/plan", response_model=EnginePlanResponse)
+def engine_plan(request: ChatRequest) -> EnginePlanResponse:
+    question, _history = _extract_question_and_history(request.messages)
+    plan = plan_regulatory_query(question)
+    return EnginePlanResponse(
+        question=question,
+        question_type=str(plan.get("question_type", "")),
+        retrieval_strategy=str(plan.get("retrieval_strategy", "")),
+        scoped_queries=[str(item) for item in plan.get("scoped_queries", [])],
+        recommended_paths=[str(item) for item in plan.get("recommended_paths", [])],
+        title_hits=_catalog_hits_response(plan.get("title_hits", [])),
+        summary_hits=_catalog_hits_response(plan.get("summary_hits", [])),
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -279,6 +375,43 @@ def chat(request: ChatRequest) -> ChatResponse:
         model_mode=request.model_mode,
         language=request.language,
         rag_mode=request.rag_mode,
+    )
+
+
+@app.post("/api/engine/chat", response_model=EngineChatResponse)
+def engine_chat(request: ChatRequest) -> EngineChatResponse:
+    if not _has_real_openai_api_key():
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
+    if not _index_artifacts_ready():
+        raise HTTPException(status_code=503, detail="Knowledge base index is not ready.")
+
+    question, history = _extract_question_and_history(request.messages)
+    client = OpenAI()
+    model_name = _model_name_for_mode(request.model_mode)
+
+    result = run_regulatory_query(
+        client,
+        question,
+        language=request.language,
+        history=history or None,
+        model=model_name,
+    )
+    sources = _sources_from_hits(result.get("hits", []))
+    plan = result.get("plan", {}) if isinstance(result.get("plan", {}), dict) else {}
+    return EngineChatResponse(
+        text=str(result.get("answer", "")),
+        sources=sources,
+        model=model_name,
+        model_mode=request.model_mode,
+        language=request.language,
+        rag_mode=request.rag_mode,
+        engine_mode=str(result.get("engine_mode", "professional")),
+        question_type=str(plan.get("question_type", "")),
+        retrieval_strategy=str(plan.get("retrieval_strategy", "")),
+        scoped_queries=[str(item) for item in plan.get("scoped_queries", [])],
+        recommended_paths=[str(item) for item in plan.get("recommended_paths", [])],
+        title_hits=_catalog_hits_response(plan.get("title_hits", [])),
+        summary_hits=_catalog_hits_response(plan.get("summary_hits", [])),
     )
 
 
