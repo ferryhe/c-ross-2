@@ -38,6 +38,32 @@ TABLE_LINE_PATTERN = re.compile(r"^\s*\|.+\|\s*$", re.MULTILINE)
 OBLIGATION_MARKERS = ("应当", "不得", "可以", "负责", "报送", "披露", "编报", "提交")
 THRESHOLD_MARKERS = ("上限", "下限", "阈值", "比例", "取值", "系数", "因子", "区间", "范围")
 FOCUS_STOPWORDS = {"第一章", "第二章", "第三章", "第四章", "第五章", "第六章", "第七章", "第八章"}
+IMAGE_ONLY_PARAGRAPH_PATTERN = re.compile(r"^(?:!\[[^\]]*\]\([^)]+\)\s*)+$")
+LINK_ONLY_PARAGRAPH_PATTERN = re.compile(r"^(?:(?:\[[^\]]+\]\([^)]+\))|(?:https?://\S+))(?:\s+(?:(?:\[[^\]]+\]\([^)]+\))|(?:https?://\S+)))*$")
+DOC_NUMBER_ONLY_PATTERN = re.compile(r"^[A-Za-z\u4e00-\u9fff]{1,12}〔?\d{4}〕?\d+号$")
+RECIPIENT_LINE_PATTERN = re.compile(r"^各.+[：:]$")
+SUMMARY_METADATA_PREFIXES = (
+    "发布日期：",
+    "发布日期:",
+    "来源：",
+    "来源:",
+    "原始链接：",
+    "原始链接:",
+    "标题：",
+    "标题:",
+    "标 题：",
+    "标 题:",
+    "发文机关：",
+    "发文机关:",
+    "发文字号：",
+    "发文字号:",
+    "主题分类：",
+    "主题分类:",
+    "公文种类：",
+    "公文种类:",
+    "成文日期：",
+    "成文日期:",
+)
 
 
 @dataclass(frozen=True)
@@ -143,7 +169,15 @@ def _repo_relative_path(md_path: Path, source: Path) -> str:
         return f"Knowledge_Base_MarkDown/{resolved.relative_to(source.resolve()).as_posix()}"
 
 
-def _intro_paragraphs(body: str, *, limit: int = 3) -> list[str]:
+def _portable_source_root(source: Path) -> str:
+    resolved = source.resolve()
+    try:
+        return resolved.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return resolved.name or "Knowledge_Base_MarkDown"
+
+
+def _intro_paragraphs(body: str, *, limit: int = 8) -> list[str]:
     paragraphs: list[str] = []
     current: list[str] = []
     in_fence = False
@@ -278,18 +312,37 @@ def _focus_points(headings: list[str], keywords: list[str]) -> list[str]:
     return points
 
 
-def _select_summary_short(title: str, paragraphs: list[str]) -> str:
+def _is_summary_noise(title_norm: str, paragraph: str) -> bool:
+    stripped = paragraph.strip()
+    normalized = _normalize_text(stripped)
+    if not normalized:
+        return True
+    if normalized == title_norm:
+        return True
+    if ATTACHMENT_NO_PATTERN.fullmatch(stripped):
+        return True
+    if len(stripped) < 8:
+        return True
+    if IMAGE_ONLY_PARAGRAPH_PATTERN.fullmatch(stripped):
+        return True
+    if LINK_ONLY_PARAGRAPH_PATTERN.fullmatch(stripped):
+        return True
+    if DOC_NUMBER_ONLY_PATTERN.fullmatch(stripped):
+        return True
+    if RECIPIENT_LINE_PATTERN.fullmatch(stripped):
+        return True
+    if any(stripped.startswith(prefix) for prefix in SUMMARY_METADATA_PREFIXES):
+        return True
+    return False
+
+
+def _summary_candidate_paragraphs(title: str, paragraphs: list[str]) -> list[str]:
     title_norm = _normalize_text(title)
-    for paragraph in paragraphs:
-        normalized = _normalize_text(paragraph)
-        if not normalized:
-            continue
-        if normalized == title_norm:
-            continue
-        if ATTACHMENT_NO_PATTERN.fullmatch(paragraph.strip()):
-            continue
-        if len(paragraph.strip()) < 8:
-            continue
+    return [paragraph for paragraph in paragraphs if not _is_summary_noise(title_norm, paragraph)]
+
+
+def _select_summary_short(title: str, paragraphs: list[str]) -> str:
+    for paragraph in _summary_candidate_paragraphs(title, paragraphs):
         return _truncate(paragraph, 180)
     if paragraphs:
         return _truncate(paragraphs[0], 180)
@@ -300,8 +353,9 @@ def _summary_structured(title: str, headings: list[str], paragraphs: list[str]) 
     parts = [f"标题：{title}"]
     if headings:
         parts.append("重点章节：" + "；".join(headings[:4]))
-    if paragraphs:
-        parts.append("内容摘要：" + " ".join(_truncate(item, 120) for item in paragraphs[:2]))
+    summary_paragraphs = _summary_candidate_paragraphs(title, paragraphs) or paragraphs
+    if summary_paragraphs:
+        parts.append("内容摘要：" + " ".join(_truncate(item, 120) for item in summary_paragraphs[:2]))
     return "\n".join(parts)
 
 
@@ -442,9 +496,10 @@ def build_ready_data(
         publish_date = _extract_front_matter_value(raw_text, "publish_date")
         headings = _headings(body)
         paragraphs = _intro_paragraphs(body)
+        summary_paragraphs = _summary_candidate_paragraphs(doc_title, paragraphs)
         alias_records = _aliases(doc_title, category, relative_path)
         alias_values = [item.alias for item in alias_records]
-        keywords = _keywords(doc_title, headings, alias_values, "\n".join(paragraphs[:2]))
+        keywords = _keywords(doc_title, headings, alias_values, "\n".join((summary_paragraphs or paragraphs)[:2]))
         summary_short = _select_summary_short(doc_title, paragraphs)
         summary_structured = _summary_structured(doc_title, headings, paragraphs)
         focus_points = _focus_points(headings, keywords)
@@ -639,7 +694,7 @@ def build_ready_data(
 
     ready_data_manifest = {
         "built_at": datetime.now(timezone.utc).isoformat(),
-        "source_root": str(source.resolve()),
+        "source_root": _portable_source_root(source),
         "doc_count": len(doc_catalog),
         "alias_count": len(title_aliases),
         "summary_count": len(doc_summaries),
