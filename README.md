@@ -1,38 +1,75 @@
 # c-ross-2
 
-`c-ross-2` 是一个面向中国偿二代监管规则的问答系统。
+`c-ross-2` 的核心目标不是做一个单独的聊天前台，而是把监管材料加工成：
 
-项目将 `PDF`、`MHTML`、`Excel` 等监管材料转换为结构化 Markdown，整理为知识库后，再通过向量检索和 RAG 问答能力，提供针对规则、附件和通知的检索、预览与问答。
+`Markdown -> chatbot-ready / AI-agent-ready 数据层 -> 可验证 RAG / consumer`
 
-## 当前功能
+当前仓库围绕中国偿二代监管规则，提供三类主产物：
 
-- 监管文档转换为 Markdown 知识库
-- 文档级索引与语义分段索引
-- 面向规则、附件、通知的研究型问答
-- `一般 / 推理` 两种模型档位切换
-- 表格、公式、数字引用超链接展示
-- 本次会话记忆与本地恢复
+- 原始监管文件到标准化 Markdown 的转换与清洗
+- 基于 Markdown 生成的 `ready_data` 数据层
+- 一个可独立运行的 `chatbot / professional engine` 参考 consumer，用来验证数据层和 RAG 层是否可用
 
-仓库当前已包含：
+## 仓库主产物
 
-- 预生成索引文件
-- 预构建前端静态产物
+### 1. 标准化 Markdown 知识库
 
-因此部署时不需要现场重建索引，也不需要现场重新构建前端。
+- 位置：`Knowledge_Base_MarkDown/`
+- 内容：`rules / notices / attachments`
+
+### 2. ready-data 数据层
+
+- 位置：`Knowledge_Base_MarkDown/ready_data/`
+- 当前产物：
+  - `doc_catalog.jsonl`
+  - `title_aliases.jsonl`
+  - `doc_summaries.jsonl`
+  - `sections_structured.jsonl`
+  - `formula_cards.jsonl`
+  - `relations_graph.json`
+  - `ready_data_manifest.json`
+
+### 3. 验证 consumer
+
+- 位置：`AI_Agent/`
+- 作用：
+  - 提供独立运行的 `chatbot`
+  - 提供 `/api/engine/*` 专业引擎接口
+  - 验证 `ready_data + 向量索引 + 回答链路` 是否真实可用
 
 ## 目录结构
 
 ```text
 .
 ├─ source_regulation/         # 原始监管文件
-├─ Knowledge_Base_MarkDown/   # 标准化后的 Markdown 知识库
-├─ AI_Agent/                  # 问答系统、索引构建、前后端实现
 ├─ scripts/                   # 文档转换、清洗、manifest 构建脚本
-├─ tests/                     # 转换与清洗测试
-└─ .devcontainer/             # Codespaces 配置
+├─ Knowledge_Base_MarkDown/   # 标准化 Markdown 主库
+│  └─ ready_data/             # chatbot-ready / AI-agent-ready 数据层
+├─ AI_Agent/                  # 参考 consumer、索引构建、API 与前端
+├─ docs/                      # 设计、演进、验证记录
+├─ skills/                    # 供 AI agent 使用的仓库内 skill
+└─ tests/                     # 转换与清洗测试
 ```
 
-## 快速开始
+## 常用工作流
+
+### 1. 只更新数据层
+
+当 `Knowledge_Base_MarkDown/` 内容变化，希望重建 agent/chatbot 可消费的数据层时：
+
+```powershell
+python AI_Agent\scripts\build_ready_data.py --source Knowledge_Base_MarkDown --output-root Knowledge_Base_MarkDown\ready_data
+```
+
+### 2. 更新向量索引
+
+当需要让参考 consumer 使用最新 Markdown 语料时：
+
+```powershell
+python AI_Agent\scripts\build_index.py --source Knowledge_Base_MarkDown
+```
+
+### 3. 启动验证 chatbot / professional engine
 
 详细说明见 [AI_Agent/README.md](./AI_Agent/README.md)。
 
@@ -47,28 +84,32 @@ copy .env.example .env
 uvicorn api_server:app --host 0.0.0.0 --port 8501
 ```
 
-只有在以下场景才需要额外执行：
+当前仓库已包含：
 
-- 修改前端代码：进入 `frontend/` 后执行 `npm install`、`npm run build`
-- 更新知识库内容：执行 `python .\scripts\build_index.py --source ..\Knowledge_Base_MarkDown`
+- 预生成 `ready_data`
+- 预生成向量索引
+- 预构建前端静态产物
 
-## Ubuntu 部署
+因此部署现有版本时，不需要现场重新构建所有产物。
 
-如果要部署到 Ubuntu 服务器，尤其是 `Docker + Caddy` 环境，直接看：
+## 文档
 
-- [AI_Agent/README.md](./AI_Agent/README.md)
-
-里面已经包含：
-
-- 运行依赖
-- 启动流程
-- 索引准备方式
-- Docker/Caddy 场景下的部署步骤
+- [文档索引](./docs/README.md)
+- [数据层 Schema 设计](./docs/project/数据层Schema设计.md)
+- [数据层下一阶段实施计划](./docs/project/数据层下一阶段实施计划.md)
+- [详细对比说明](./docs/project/详细对比说明.md)
+- [AI_Agent 服务说明](./AI_Agent/README.md)
 
 ## 测试
 
 ```powershell
-python -m pytest tests AI_Agent/tests
+python -m pytest tests AI_Agent\tests
+```
+
+如果修改了前端：
+
+```powershell
 cd AI_Agent\frontend
 npm test
+npm run build
 ```

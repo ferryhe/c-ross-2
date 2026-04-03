@@ -117,6 +117,8 @@ _INDEX_CACHE = None
 _DOCS_CACHE = None
 _SECTION_INDEX_CACHE = None
 _SECTION_DOCS_CACHE = None
+_INDEX_CACHE_PATHS = None
+_SECTION_CACHE_PATHS = None
 _MANIFEST_CACHE = None
 _ENCODER = None
 
@@ -379,9 +381,10 @@ def _load_manifest(refresh: bool = False) -> list[dict[str, Any]]:
 
 
 def _load_artifacts(refresh: bool = False):
-    global _INDEX_CACHE, _DOCS_CACHE
+    global _INDEX_CACHE, _DOCS_CACHE, _INDEX_CACHE_PATHS
+    current_paths = (INDEX_PATH.resolve(), META_PATH.resolve())
 
-    if refresh or _INDEX_CACHE is None or _DOCS_CACHE is None:
+    if refresh or _INDEX_CACHE is None or _DOCS_CACHE is None or _INDEX_CACHE_PATHS != current_paths:
         if not INDEX_PATH.exists() or not META_PATH.exists():
             raise FileNotFoundError(
                 "Missing vector store files. Run scripts/build_index.py first.\n"
@@ -392,17 +395,22 @@ def _load_artifacts(refresh: bool = False):
         with META_PATH.open("rb") as fh:
             _DOCS_CACHE = pickle.load(fh)
         _validate_doc_metadata(_DOCS_CACHE)
+        _INDEX_CACHE_PATHS = current_paths
 
     return _INDEX_CACHE, _DOCS_CACHE
 
 
 def _load_section_artifacts(refresh: bool = False, *, required: bool = False):
-    global _SECTION_INDEX_CACHE, _SECTION_DOCS_CACHE
+    global _SECTION_INDEX_CACHE, _SECTION_DOCS_CACHE, _SECTION_CACHE_PATHS
 
     section_index_path = _section_index_path()
     section_meta_path = _section_meta_path()
+    current_paths = (section_index_path.resolve(), section_meta_path.resolve())
 
     if not section_index_path.exists() or not section_meta_path.exists():
+        _SECTION_INDEX_CACHE = None
+        _SECTION_DOCS_CACHE = None
+        _SECTION_CACHE_PATHS = None
         if required:
             raise FileNotFoundError(
                 "Missing section vector store files. Run scripts/build_index.py first.\n"
@@ -410,11 +418,12 @@ def _load_section_artifacts(refresh: bool = False, *, required: bool = False):
             )
         return None, []
 
-    if refresh or _SECTION_INDEX_CACHE is None or _SECTION_DOCS_CACHE is None:
+    if refresh or _SECTION_INDEX_CACHE is None or _SECTION_DOCS_CACHE is None or _SECTION_CACHE_PATHS != current_paths:
         _SECTION_INDEX_CACHE = _load_index(section_index_path)
         with section_meta_path.open("rb") as fh:
             _SECTION_DOCS_CACHE = pickle.load(fh)
         _validate_section_metadata(_SECTION_DOCS_CACHE)
+        _SECTION_CACHE_PATHS = current_paths
 
     return _SECTION_INDEX_CACHE, _SECTION_DOCS_CACHE
 
@@ -687,19 +696,28 @@ def retrieve_sections(
     k: int = DEFAULT_TOP_K,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> list[dict]:
+    global _SECTION_INDEX_CACHE, _SECTION_DOCS_CACHE, _SECTION_CACHE_PATHS
     index, docs = _load_section_artifacts(required=False)
     if index is None or not docs:
         return []
     query_vec = query_vec or _create_embedding(client, question)
-    return _search_hits(
-        question,
-        query_vec,
-        index,
-        docs,
-        k=k,
-        similarity_threshold=similarity_threshold,
-        include_direct_matches=True,
-    )
+    try:
+        return _search_hits(
+            question,
+            query_vec,
+            index,
+            docs,
+            k=k,
+            similarity_threshold=similarity_threshold,
+            include_direct_matches=True,
+        )
+    except AssertionError:
+        # If a stale or incompatible section index is configured, fall back to
+        # document retrieval instead of failing the whole answer pipeline.
+        _SECTION_INDEX_CACHE = None
+        _SECTION_DOCS_CACHE = None
+        _SECTION_CACHE_PATHS = None
+        return []
 
 
 def merge_retrieval_hits(
