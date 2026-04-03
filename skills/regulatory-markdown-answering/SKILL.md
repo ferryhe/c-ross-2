@@ -1,33 +1,38 @@
 ---
 name: regulatory-markdown-answering
-description: Grounded answering workflow for regulation-heavy Markdown knowledge bases with rules, notices, attachments, formulas, thresholds, reporting obligations, and version adjustments. Use when an AI agent needs to answer questions about regulatory documents by first locating official titles or numbers, then using summary search, evidence retrieval, related notices/attachments, and citation-backed synthesis instead of freeform chatbot behavior.
+description: Answer questions over this repo's regulation-ready Markdown data layer. Use when an AI agent needs to answer questions about rules, notices, attachments, formulas, thresholds, implementation notices, or reporting obligations by reading `Knowledge_Base_MarkDown/ready_data/` first, narrowing scope by title or number, then grounding the final answer in structured sections or raw Markdown instead of freeform chatbot guessing.
 ---
 
 # Goal
 
-Produce verifiable answers over regulatory Markdown, while minimizing unsupported inference.
+Produce verifiable answers from this repo's `ready_data` artifacts with the smallest correct scope and the least unsupported inference.
 
 # Workflow
 
-1. Classify the question as `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.
-2. If the question mentions a rule number, attachment number, or official notice title, call title search first.
-3. If the question asks for overview, major content, scope, or comparison, call summary search before retrieving evidence.
-4. If the question asks about formulas, variables, thresholds, coefficients, tables, or curves, prioritize section-level evidence and formula/table snippets.
-5. If the question asks about adjustments, implementation, transition period, optimization, or extension, expand to related notices before final synthesis.
-6. Synthesize only after evidence is grounded in retrieved Markdown.
+1. Classify the question as `catalog`, `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.
+2. For counts or directory questions, answer from `doc_catalog.jsonl` or `manifest.json` directly instead of retrieval.
+3. If the question contains a rule number, attachment number, or exact notice title, resolve the target document from `doc_catalog.jsonl` and `title_aliases.jsonl` first, then keep the initial scope to that `doc_id`.
+4. If the question asks for overview, scope, or major content, read `doc_summaries.jsonl` first and use `summary_structured`, `focus_points`, and headings to build the outline.
+5. If the question asks for a requirement, article, threshold, table, formula, or variable, use `sections_structured.jsonl` as the primary evidence layer.
+6. If the question asks for a formula, use `formula_cards.jsonl` to locate the formula and use the matching structured section to explain variable meaning, applicability, and nearby rule text.
+7. Expand to notices, attachments, or related rules only when the question asks about implementation, transition, optimization, adjustments, or when the chosen section explicitly points to them.
+8. Fall back to raw Markdown only when the `ready_data` artifacts are insufficient or obviously noisy.
 
-# Mandatory answer rules
+# Artifact Roles
+
+- `doc_catalog.jsonl`: document identity, numbering, aliases, headings, and direct catalog answers
+- `title_aliases.jsonl`: shorthand, rule number, attachment number, and notice-title lookup
+- `doc_summaries.jsonl`: overview and scope narrowing
+- `sections_structured.jsonl`: article-level, requirement-level, threshold-level, table-level, and formula-adjacent evidence
+- `formula_cards.jsonl`: formula lookup only; do not rely on it alone for semantic explanation
+- `relations_graph.json` and `related_doc_ids`: expansion hints, not authoritative regulatory conclusions
+
+# Mandatory Answer Rules
 
 - Start with a direct conclusion.
-- Cite retrieved evidence for every substantive claim.
-- Separate `regulatory requirement` from `known facts` when the user asks for compliance judgment.
+- Keep exact-number questions scoped to the matching document before exploring related material.
+- Treat `related_doc_ids` and relation edges as navigation hints; confirm the substantive claim in section text or raw Markdown before using it.
 - Explain formulas with variable meaning and applicability; do not only restate LaTeX.
-- For comparison questions, split into common points, differences, and relationship.
-- If evidence is incomplete, say what is missing and which Markdown file or section should be checked next.
-
-# Tool expectations
-
-- Use title search to resolve official document candidates.
-- Use summary search to narrow the document set.
-- Use evidence retrieval for article-, section-, table-, and formula-level support.
-- Use related notice or attachment expansion when the answer may have been adjusted after the base rule.
+- Prefer section evidence over summary text when the question asks "由哪些部分组成", "按照哪项规则计量", "第几条怎么规定", or similar article-level questions.
+- If `summary_short` is noisy because of OCR notes, image placeholders, or publish-date boilerplate, use `summary_structured`, headings, and section text instead.
+- Separate regulatory text from your own inference, and say when evidence is incomplete.

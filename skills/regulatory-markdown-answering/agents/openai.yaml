@@ -1,0 +1,4 @@
+interface:
+  display_name: "Regulatory Answering"
+  short_description: "Answer regulation questions from ready_data"
+  default_prompt: "Use $regulatory-markdown-answering to answer this regulation question from ready_data first."

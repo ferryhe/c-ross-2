@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ready-Data Builder"
+  short_description: "Build ready_data from regulatory Markdown"
+  default_prompt: "Use $regulatory-ready-data-builder to regenerate ready_data for this Markdown corpus."
