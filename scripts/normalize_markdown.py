@@ -27,11 +27,12 @@ FRONT_MATTER_ORDER = [
 ]
 
 MATH_SEGMENT_PATTERN = re.compile(
-    r"(?P<display_dollar>\$\$.*?\$\$)"
+    r"(?P<fenced_math>```(?:math|latex)\s*[\r\n]+.*?[\r\n]*```)"
+    r"|(?P<display_dollar>\$\$.*?\$\$)"
     r"|(?P<display_bracket>\\\[.*?\\\])"
     r"|(?P<inline_paren>\\\(.*?\\\))"
     r"|(?P<inline_dollar>(?<!\$)\$(?!\$).*?(?<!\\)\$)",
-    re.DOTALL,
+    re.DOTALL | re.IGNORECASE,
 )
 
 ENTITY_REPLACEMENTS = (
@@ -103,6 +104,10 @@ LATEX_INLINE_REPLACEMENTS = {
 }
 
 HEADING_PATTERN = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.+?)\s*$")
+FRAGMENTED_DECIMAL_PATTERN = re.compile(
+    r"(?<!\d)(?P<sign>[+\-−])?\s*(?P<int>\d+)\s*\.\s*(?P<fraction>\d(?:\s*\d)*)(?!\d)"
+)
+MATH_PERCENT_SPACING_PATTERN = re.compile(r"(?P<number>[+\-−]?\d+(?:\.\d+)?)\s+\\%")
 
 
 def normalize_corpus(raw_root: Path = RAW_MARKDOWN_ROOT, output_root: Path = KNOWLEDGE_BASE_ROOT) -> list[Path]:
@@ -150,6 +155,7 @@ def _decode_math_entities(segment: str) -> str:
     cleaned = BROKEN_CJK_SUBSUP_PATTERN.sub(_replace_broken_cjk_subsup, cleaned)
     cleaned = LEFT_ARRAY_CASES_PATTERN.sub(_replace_left_array_cases, cleaned)
     cleaned = cleaned.replace("\xa0", " ")
+    cleaned = _normalize_fragmented_math_numbers(cleaned)
     if cleaned.startswith("$$") and cleaned.endswith("$$") and r"\begin{cases}" in cleaned:
         return _rewrite_display_cases_as_math_fence(cleaned)
     return cleaned
@@ -231,6 +237,18 @@ def _replace_broken_cjk_subsup(match: re.Match[str]) -> str:
 def _replace_left_array_cases(match: re.Match[str]) -> str:
     body = match.group("body").strip()
     return f"\\begin{{cases}} {body} \\end{{cases}}"
+
+
+def _normalize_fragmented_math_numbers(segment: str) -> str:
+    normalized = FRAGMENTED_DECIMAL_PATTERN.sub(_replace_fragmented_decimal, segment)
+    return MATH_PERCENT_SPACING_PATTERN.sub(r"\g<number>\\%", normalized)
+
+
+def _replace_fragmented_decimal(match: re.Match[str]) -> str:
+    sign = (match.group("sign") or "").replace("−", "-")
+    integer = match.group("int")
+    fraction = re.sub(r"\s+", "", match.group("fraction"))
+    return f"{sign}{integer}.{fraction}"
 
 
 def _rewrite_display_cases_as_math_fence(segment: str) -> str:
