@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -114,3 +115,39 @@ def test_plan_regulatory_query_uses_title_hits_for_scoped_queries(monkeypatch):
 
 def test_detect_question_type_recognizes_formula_query():
     assert engine_module.detect_question_type("规则第2号的计算公式是什么") == "formula"
+
+
+def test_load_catalog_prefers_ready_data_artifact(tmp_path, monkeypatch):
+    ready_data_root = tmp_path / "ready_data"
+    ready_data_root.mkdir(parents=True)
+    doc_catalog = ready_data_root / "doc_catalog.jsonl"
+    doc_catalog.write_text(
+        json.dumps(
+            {
+                "doc_id": "rules/rule-2.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-2.md",
+                "title": "保险公司偿付能力监管规则第2号：最低资本",
+                "category": "rules",
+                "source_type": ".pdf",
+                "publish_date": "",
+                "aliases": ["规则第2号"],
+                "summary_short": "最低资本规则。",
+                "summary_structured": "标题：规则第2号",
+                "headings": ["第一章 总则"],
+                "keywords": ["最低资本"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(engine_module, "DOC_CATALOG_PATH", doc_catalog, raising=False)
+    monkeypatch.setattr(engine_module, "MANIFEST_PATH", tmp_path / "missing.json", raising=False)
+    engine_module.refresh_catalog()
+
+    entries = engine_module.load_catalog()
+
+    assert len(entries) == 1
+    assert entries[0].doc_id == "rules/rule-2.md"
+    assert entries[0].summary_short == "最低资本规则。"

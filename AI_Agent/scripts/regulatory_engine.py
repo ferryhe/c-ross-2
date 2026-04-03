@@ -11,6 +11,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = PROJECT_ROOT.parent
 KNOWLEDGE_ROOT = REPO_ROOT / "Knowledge_Base_MarkDown"
+READY_DATA_ROOT = KNOWLEDGE_ROOT / "ready_data"
+DOC_CATALOG_PATH = READY_DATA_ROOT / "doc_catalog.jsonl"
 MANIFEST_PATH = KNOWLEDGE_ROOT / "manifest.json"
 FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\r?\n.*?\r?\n---\s*\r?\n?", re.DOTALL)
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -218,6 +220,32 @@ def _entry_to_hit(entry: CatalogEntry, score: float, reason: str) -> dict[str, A
 
 @lru_cache(maxsize=1)
 def load_catalog() -> tuple[CatalogEntry, ...]:
+    if DOC_CATALOG_PATH.exists():
+        entries: list[CatalogEntry] = []
+        for line in DOC_CATALOG_PATH.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if not isinstance(item, dict):
+                continue
+            entries.append(
+                CatalogEntry(
+                    doc_id=str(item.get("doc_id", "")).replace("\\", "/"),
+                    path=str(item.get("path", "")).replace("\\", "/"),
+                    title=str(item.get("title", "")),
+                    category=str(item.get("category", "")),
+                    source_type=str(item.get("source_type", "")),
+                    publish_date=str(item.get("publish_date", "")),
+                    aliases=tuple(str(value) for value in item.get("aliases", []) if str(value).strip()),
+                    headings=tuple(str(value) for value in item.get("headings", []) if str(value).strip()),
+                    summary_short=str(item.get("summary_short", "")),
+                    summary_structured=str(item.get("summary_structured", "")),
+                    keywords=tuple(str(value) for value in item.get("keywords", []) if str(value).strip()),
+                )
+            )
+        if entries:
+            return tuple(entries)
+
     if not MANIFEST_PATH.exists():
         return tuple()
 
