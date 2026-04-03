@@ -1,0 +1,19 @@
+{
+  "built_at": "2026-04-03T18:56:15.622483+00:00",
+  "source_root": "C:\\Project\\c-ross-2\\Knowledge_Base_MarkDown",
+  "doc_count": 32,
+  "alias_count": 162,
+  "summary_count": 32,
+  "section_count": 359,
+  "formula_count": 161,
+  "relation_edge_count": 80,
+  "artifact_files": [
+    "doc_catalog.jsonl",
+    "title_aliases.jsonl",
+    "doc_summaries.jsonl",
+    "sections_structured.jsonl",
+    "formula_cards.jsonl",
+    "relations_graph.json",
+    "ready_data_manifest.json"
+  ]
+}
