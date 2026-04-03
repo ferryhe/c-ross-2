@@ -34,6 +34,11 @@
 - `/healthz`
 - `/api/config`
 - `/api/chat`
+- `/api/engine/config`
+- `/api/engine/search/titles`
+- `/api/engine/search/summaries`
+- `/api/engine/plan`
+- `/api/engine/chat`
 - 托管前端静态文件
 
 3. 前端界面
@@ -53,12 +58,27 @@
 ## 功能
 
 - 知识库问答
+- 法规专业回答引擎 API
 - 文档级 + 语义分段混合检索
 - 研究型回答风格
 - `一般 = gpt-4.1`
 - `推理 = gpt-5.4-mini`
 - 回答中的数字引用可直接点击
 - 前端对公式增加了 LaTeX 保护和常见 OCR 公式清洗
+
+当前服务保留两种使用形态：
+
+- `chatbot mode`
+  - 继续使用 `/api/chat`
+  - 适合当前前端和独立运行的聊天界面
+- `professional engine mode`
+  - 使用 `/api/engine/*`
+  - 适合技能化 agent、外部工作流和更可控的法规问答编排
+
+补充文档：
+
+- [专业回答引擎 API 说明](./专业回答引擎API说明.md)
+- [专业回答引擎演进记录](./专业回答引擎演进记录.md)
 
 当前仓库已包含两类部署产物：
 
