@@ -103,3 +103,22 @@ def test_normalize_math_entities_keeps_complex_inline_math():
 
     assert "$20 < t \\leq 40$" in cleaned
     assert "$\\sum_{i=1}^{36} EP_i < 0$" in cleaned
+
+
+def test_normalize_math_entities_merges_fragmented_decimals_in_fenced_math():
+    text = (
+        "```math\n"
+        "\\mathrm {k} _ {2} = \\begin{cases}\n"
+        "0. 1 4 8 & \\mathrm {N E} _ {\\text {船货特险}} \\in (- \\infty , - 1 \\%) \\\\\n"
+        "- 0. 0 2 3 & \\mathrm {N E} _ {\\text {船货特险}} \\in [ 2. 5 \\%, 5 \\%)\n"
+        "\\end{cases}\n"
+        "```"
+    )
+
+    cleaned = normalize_math_entities(text)
+
+    assert "0.148" in cleaned
+    assert "-0.023" in cleaned
+    assert "2.5\\%" in cleaned
+    assert "0. 1 4 8" not in cleaned
+    assert "- 0. 0 2 3" not in cleaned
