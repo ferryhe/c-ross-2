@@ -119,3 +119,54 @@ def test_build_ready_data_generates_relation_edges(tmp_path):
 
     graph = json.loads((output_root / "relations_graph.json").read_text(encoding="utf-8"))
     assert any(edge["relation"] == "mentions_attachment" for edge in graph["edges"])
+
+
+def test_build_ready_data_preserves_empty_front_matter_values_and_related_docs(tmp_path):
+    source = tmp_path / "Knowledge_Base_MarkDown"
+    rules_dir = source / "rules"
+    attachments_dir = source / "attachments"
+    rules_dir.mkdir(parents=True)
+    attachments_dir.mkdir(parents=True)
+
+    (attachments_dir / "附件4：压力测试情景.md").write_text(
+        "---\n"
+        "title: 附件4：压力测试情景\n"
+        "category: attachments\n"
+        "source_type: .pdf\n"
+        "publish_date: \n"
+        "converted_engine: mistral\n"
+        "---\n\n"
+        "# 附件4：压力测试情景\n\n"
+        "压力测试情景正文。\n",
+        encoding="utf-8",
+    )
+
+    (rules_dir / "保险公司偿付能力监管规则第2号：最低资本.md").write_text(
+        "---\n"
+        "title: 保险公司偿付能力监管规则第2号：最低资本\n"
+        "category: rules\n"
+        "source_type: .pdf\n"
+        "publish_date: \n"
+        "converted_engine: mistral\n"
+        "---\n\n"
+        "# 保险公司偿付能力监管规则第2号：最低资本\n\n"
+        "附件4\n\n"
+        "最低资本由三部分组成，并应参考附件4。\n",
+        encoding="utf-8",
+    )
+
+    output_root = source / "ready_data"
+    ready_data_module.build_ready_data(source=source, output_root=output_root, section_max_tokens=200)
+
+    catalog = _read_jsonl(output_root / "doc_catalog.jsonl")
+    summaries = _read_jsonl(output_root / "doc_summaries.jsonl")
+
+    rule_catalog = next(item for item in catalog if item["category"] == "rules")
+    rule_summary = next(item for item in summaries if item["category"] == "rules")
+    attachment_summary = next(item for item in summaries if item["category"] == "attachments")
+
+    assert rule_catalog["publish_date"] == ""
+    assert rule_catalog["source_type"] == ".pdf"
+    assert rule_catalog["summary_short"].startswith("最低资本由三部分组成")
+    assert rule_summary["related_doc_ids"] == ["attachments/附件4：压力测试情景.md"]
+    assert attachment_summary["related_doc_ids"] == []

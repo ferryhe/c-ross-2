@@ -218,6 +218,13 @@ def _entry_to_hit(entry: CatalogEntry, score: float, reason: str) -> dict[str, A
     )
 
 
+def _title_focus_terms(title: str) -> tuple[str, ...]:
+    segments = [segment.strip() for segment in re.split(r"[：:]", title) if segment.strip()]
+    if len(segments) <= 1:
+        return tuple()
+    return tuple(segment for segment in segments[1:] if len(segment) >= 2)
+
+
 @lru_cache(maxsize=1)
 def load_catalog() -> tuple[CatalogEntry, ...]:
     if DOC_CATALOG_PATH.exists():
@@ -314,6 +321,14 @@ def _score_title_query(query: str, entry: CatalogEntry) -> tuple[float, str] | N
     elif query_norm in title_norm:
         best_score = 150.0
         best_reason = "标题包含查询"
+
+    for focus_term in _title_focus_terms(entry.title):
+        focus_norm = _normalize_text(focus_term)
+        if not focus_norm:
+            continue
+        if focus_norm in query_norm and 90.0 > best_score:
+            best_score = 90.0
+            best_reason = f"标题主题命中：{focus_term}"
 
     for alias in entry.aliases:
         alias_norm = _normalize_text(alias)
@@ -423,14 +438,77 @@ def detect_question_type(question: str) -> str:
 
 
 def build_scoped_queries(question: str, title_hits: list[dict[str, Any]], summary_hits: list[dict[str, Any]]) -> list[str]:
+    return _build_scoped_queries(question, title_hits, summary_hits)
+
+
+def _filter_hits_by_doc_ids(hits: list[dict[str, Any]], doc_ids: list[str] | None) -> list[dict[str, Any]]:
+    target_ids = {item.replace("\\", "/") for item in doc_ids or []}
+    if not target_ids:
+        return hits
+    filtered = [hit for hit in hits if str(hit.get("doc_id", "")).replace("\\", "/") in target_ids]
+    return filtered or hits
+
+
+def _resolve_exact_scope_doc_ids(question: str, title_hits: list[dict[str, Any]]) -> list[str]:
+    question_rule = RULE_NO_PATTERN.search(question)
+    if question_rule:
+        exact_rule_hits = [
+            str(hit.get("doc_id", "")).replace("\\", "/")
+            for hit in title_hits
+            if RULE_NO_PATTERN.search(str(hit.get("title", "")))
+            and RULE_NO_PATTERN.search(str(hit.get("title", ""))).group(1) == question_rule.group(1)
+        ]
+        if exact_rule_hits:
+            return exact_rule_hits[:1]
+
+    question_attachment = ATTACHMENT_NO_PATTERN.search(question)
+    if question_attachment:
+        exact_attachment_hits = [
+            str(hit.get("doc_id", "")).replace("\\", "/")
+            for hit in title_hits
+            if ATTACHMENT_NO_PATTERN.search(str(hit.get("title", "")))
+            and ATTACHMENT_NO_PATTERN.search(str(hit.get("title", ""))).group(1) == question_attachment.group(1)
+        ]
+        if exact_attachment_hits:
+            return exact_attachment_hits[:1]
+
+    return []
+
+
+def _resolve_preferred_scope_doc_ids(question_type: str, title_hits: list[dict[str, Any]]) -> list[str]:
+    if question_type == "comparison" or not title_hits:
+        return []
+
+    first_hit = title_hits[0]
+    first_score = float(first_hit.get("score", 0.0))
+    second_score = float(title_hits[1].get("score", 0.0)) if len(title_hits) > 1 else 0.0
+    if first_score >= 60.0 and first_score >= second_score + 20.0:
+        doc_id = str(first_hit.get("doc_id", "")).replace("\\", "/")
+        if doc_id:
+            return [doc_id]
+    return []
+
+
+def _build_scoped_queries(
+    question: str,
+    title_hits: list[dict[str, Any]],
+    summary_hits: list[dict[str, Any]],
+    *,
+    scoped_doc_ids: list[str] | None = None,
+) -> list[str]:
+    filtered_title_hits = _filter_hits_by_doc_ids(title_hits, scoped_doc_ids)
+    filtered_summary_hits = _filter_hits_by_doc_ids(summary_hits, scoped_doc_ids)
     queries = [question]
 
-    for hit in title_hits[:2]:
+    title_limit = 1 if scoped_doc_ids else 2
+    summary_limit = 1 if scoped_doc_ids else 2
+
+    for hit in filtered_title_hits[:title_limit]:
         title = str(hit.get("title", "")).strip()
         if title:
             queries.append(title)
 
-    for hit in summary_hits[:2]:
+    for hit in filtered_summary_hits[:summary_limit]:
         title = str(hit.get("title", "")).strip()
         summary_short = str(hit.get("summary_short", "")).strip()
         if title and summary_short:
@@ -451,8 +529,12 @@ def build_scoped_queries(question: str, title_hits: list[dict[str, Any]], summar
 def plan_regulatory_query(question: str) -> dict[str, Any]:
     question_type = detect_question_type(question)
     title_hits = search_titles(question, limit=5)
+    exact_scope_doc_ids = _resolve_exact_scope_doc_ids(question, title_hits)
+    preferred_scope_doc_ids = _resolve_preferred_scope_doc_ids(question_type, title_hits)
+    scoped_doc_ids = exact_scope_doc_ids or preferred_scope_doc_ids
     title_doc_ids = [str(hit["doc_id"]) for hit in title_hits]
-    summary_hits = search_summaries(question, limit=5, doc_ids=title_doc_ids or None)
+    summary_scope_doc_ids = scoped_doc_ids or title_doc_ids or None
+    summary_hits = search_summaries(question, limit=5, doc_ids=summary_scope_doc_ids)
     retrieval_strategy = {
         "locate": "title-first",
         "summary": "title-summary-document",
@@ -462,8 +544,15 @@ def plan_regulatory_query(question: str) -> dict[str, Any]:
         "compliance": "title-summary-evidence",
         "analysis": "summary-hybrid",
     }.get(question_type, "summary-hybrid")
-    scoped_queries = build_scoped_queries(question, title_hits, summary_hits)
-    recommended_paths = [str(hit["path"]) for hit in [*title_hits[:2], *summary_hits[:2]]]
+    scoped_queries = _build_scoped_queries(
+        question,
+        title_hits,
+        summary_hits,
+        scoped_doc_ids=scoped_doc_ids,
+    )
+    recommended_title_hits = _filter_hits_by_doc_ids(title_hits, scoped_doc_ids)
+    recommended_summary_hits = _filter_hits_by_doc_ids(summary_hits, scoped_doc_ids)
+    recommended_paths = [str(hit["path"]) for hit in [*recommended_title_hits[:2], *recommended_summary_hits[:2]]]
 
     return {
         "question": question,
@@ -471,6 +560,8 @@ def plan_regulatory_query(question: str) -> dict[str, Any]:
         "retrieval_strategy": retrieval_strategy,
         "title_hits": title_hits,
         "summary_hits": summary_hits,
+        "exact_scope_doc_ids": exact_scope_doc_ids,
+        "scoped_doc_ids": scoped_doc_ids,
         "scoped_queries": scoped_queries,
         "recommended_paths": list(dict.fromkeys(recommended_paths)),
     }

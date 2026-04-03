@@ -123,7 +123,7 @@ def _truncate(value: str, limit: int) -> str:
 
 
 def _extract_front_matter_value(text: str, key: str) -> str:
-    pattern = re.compile(rf"^{re.escape(key)}:\s*(.+?)\s*$", re.MULTILINE)
+    pattern = re.compile(rf"^{re.escape(key)}:[ \t]*(.*?)\s*$", re.MULTILINE)
     match = pattern.search(text)
     if not match:
         return ""
@@ -278,6 +278,24 @@ def _focus_points(headings: list[str], keywords: list[str]) -> list[str]:
     return points
 
 
+def _select_summary_short(title: str, paragraphs: list[str]) -> str:
+    title_norm = _normalize_text(title)
+    for paragraph in paragraphs:
+        normalized = _normalize_text(paragraph)
+        if not normalized:
+            continue
+        if normalized == title_norm:
+            continue
+        if ATTACHMENT_NO_PATTERN.fullmatch(paragraph.strip()):
+            continue
+        if len(paragraph.strip()) < 8:
+            continue
+        return _truncate(paragraph, 180)
+    if paragraphs:
+        return _truncate(paragraphs[0], 180)
+    return title
+
+
 def _summary_structured(title: str, headings: list[str], paragraphs: list[str]) -> str:
     parts = [f"标题：{title}"]
     if headings:
@@ -427,7 +445,7 @@ def build_ready_data(
         alias_records = _aliases(doc_title, category, relative_path)
         alias_values = [item.alias for item in alias_records]
         keywords = _keywords(doc_title, headings, alias_values, "\n".join(paragraphs[:2]))
-        summary_short = _truncate(paragraphs[0], 180) if paragraphs else doc_title
+        summary_short = _select_summary_short(doc_title, paragraphs)
         summary_structured = _summary_structured(doc_title, headings, paragraphs)
         focus_points = _focus_points(headings, keywords)
 
@@ -577,7 +595,7 @@ def build_ready_data(
 
         for attachment_number in ATTACHMENT_REF_PATTERN.findall(body):
             target = attachment_targets.get(attachment_number)
-            if not target:
+            if not target or target == doc_id:
                 continue
             edge = (doc_id, target, "mentions_attachment")
             if edge in seen_edges:
@@ -591,6 +609,18 @@ def build_ready_data(
                     "label": f"附件{attachment_number}",
                 }
             )
+
+    related_doc_ids_map: dict[str, list[str]] = {}
+    for edge in relation_edges:
+        source_doc_id = str(edge["source"])
+        target = str(edge["target"])
+        related_doc_ids_map.setdefault(source_doc_id, [])
+        if target not in related_doc_ids_map[source_doc_id]:
+            related_doc_ids_map[source_doc_id].append(target)
+
+    for row in doc_summaries:
+        doc_id = str(row["doc_id"])
+        row["related_doc_ids"] = related_doc_ids_map.get(doc_id, [])
 
     _write_jsonl(output_root / "doc_catalog.jsonl", doc_catalog)
     _write_jsonl(output_root / "title_aliases.jsonl", title_aliases)

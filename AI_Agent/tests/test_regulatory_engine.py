@@ -72,6 +72,40 @@ def test_search_titles_prefers_rule_number_match(monkeypatch):
     assert "规则编号命中" in hits[0]["reason"]
 
 
+def test_search_titles_prefers_title_focus_term(monkeypatch):
+    monkeypatch.setattr(
+        engine_module,
+        "load_catalog",
+        lambda: (
+            _entry(
+                doc_id="rules/rule-2.md",
+                path="Knowledge_Base_MarkDown/rules/rule-2.md",
+                title="保险公司偿付能力监管规则第2号：最低资本",
+                category="rules",
+                aliases=("规则第2号",),
+                summary_short="最低资本规则。",
+                summary_structured="标题：规则第2号\n内容摘要：最低资本规则。",
+                keywords=("最低资本",),
+            ),
+            _entry(
+                doc_id="rules/rule-19.md",
+                path="Knowledge_Base_MarkDown/rules/rule-19.md",
+                title="保险公司偿付能力监管规则第19号：保险集团",
+                category="rules",
+                aliases=("规则第19号",),
+                summary_short="保险集团规则。",
+                summary_structured="标题：规则第19号\n内容摘要：保险集团规则。",
+                keywords=("保险集团", "最低资本"),
+            ),
+        ),
+    )
+
+    hits = engine_module.search_titles("最低资本由哪些部分组成？", limit=2)
+
+    assert hits[0]["title"] == "保险公司偿付能力监管规则第2号：最低资本"
+    assert "标题主题命中" in hits[0]["reason"]
+
+
 def test_plan_regulatory_query_uses_title_hits_for_scoped_queries(monkeypatch):
     monkeypatch.setattr(
         engine_module,
@@ -110,7 +144,122 @@ def test_plan_regulatory_query_uses_title_hits_for_scoped_queries(monkeypatch):
 
     assert plan["question_type"] == "summary"
     assert plan["retrieval_strategy"] == "title-summary-document"
+    assert plan["exact_scope_doc_ids"] == ["rules/rule-2.md"]
+    assert plan["scoped_doc_ids"] == ["rules/rule-2.md"]
     assert "保险公司偿付能力监管规则第2号：最低资本" in plan["scoped_queries"]
+
+
+def test_plan_regulatory_query_limits_scope_for_exact_numbered_match(monkeypatch):
+    monkeypatch.setattr(
+        engine_module,
+        "search_titles",
+        lambda query, limit=5: [
+            {
+                "doc_id": "rules/rule-2.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-2.md",
+                "title": "保险公司偿付能力监管规则第2号：最低资本",
+                "category": "rules",
+                "score": 220.0,
+                "reason": "规则编号命中：第2号",
+                "summary_short": "最低资本规则。",
+                "aliases": ("规则第2号",),
+            },
+            {
+                "doc_id": "rules/rule-9.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-9.md",
+                "title": "保险公司偿付能力监管规则第9号：信用风险最低资本",
+                "category": "rules",
+                "score": 40.0,
+                "reason": "标题关键词相关",
+                "summary_short": "信用风险最低资本。",
+                "aliases": ("规则第9号",),
+            },
+        ],
+    )
+
+    captured_doc_ids: list[list[str] | None] = []
+
+    def _search_summaries(query, limit=5, doc_ids=None):
+        captured_doc_ids.append(doc_ids)
+        return [
+            {
+                "doc_id": "rules/rule-2.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-2.md",
+                "title": "保险公司偿付能力监管规则第2号：最低资本",
+                "category": "rules",
+                "score": 100.0,
+                "reason": "摘要层直接覆盖查询",
+                "summary_short": "最低资本规则。",
+                "aliases": ("规则第2号",),
+            }
+        ]
+
+    monkeypatch.setattr(engine_module, "search_summaries", _search_summaries)
+
+    plan = engine_module.plan_regulatory_query("保险公司偿付能力监管规则第2号主要涉及什么内容？")
+
+    assert captured_doc_ids == [["rules/rule-2.md"]]
+    assert plan["scoped_queries"] == [
+        "保险公司偿付能力监管规则第2号主要涉及什么内容？",
+        "保险公司偿付能力监管规则第2号：最低资本",
+        "保险公司偿付能力监管规则第2号：最低资本 最低资本规则。",
+    ]
+    assert plan["recommended_paths"] == ["Knowledge_Base_MarkDown/rules/rule-2.md"]
+
+
+def test_plan_regulatory_query_uses_preferred_scope_for_title_focus(monkeypatch):
+    monkeypatch.setattr(
+        engine_module,
+        "search_titles",
+        lambda query, limit=5: [
+            {
+                "doc_id": "rules/rule-2.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-2.md",
+                "title": "保险公司偿付能力监管规则第2号：最低资本",
+                "category": "rules",
+                "score": 90.0,
+                "reason": "标题主题命中：最低资本",
+                "summary_short": "最低资本规则。",
+                "aliases": ("规则第2号",),
+            },
+            {
+                "doc_id": "rules/rule-19.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-19.md",
+                "title": "保险公司偿付能力监管规则第19号：保险集团",
+                "category": "rules",
+                "score": 10.0,
+                "reason": "标题关键词相关",
+                "summary_short": "保险集团规则。",
+                "aliases": ("规则第19号",),
+            },
+        ],
+    )
+
+    captured_doc_ids: list[list[str] | None] = []
+
+    def _search_summaries(query, limit=5, doc_ids=None):
+        captured_doc_ids.append(doc_ids)
+        return [
+            {
+                "doc_id": "rules/rule-2.md",
+                "path": "Knowledge_Base_MarkDown/rules/rule-2.md",
+                "title": "保险公司偿付能力监管规则第2号：最低资本",
+                "category": "rules",
+                "score": 100.0,
+                "reason": "摘要层直接覆盖查询",
+                "summary_short": "最低资本规则。",
+                "aliases": ("规则第2号",),
+            }
+        ]
+
+    monkeypatch.setattr(engine_module, "search_summaries", _search_summaries)
+
+    plan = engine_module.plan_regulatory_query("最低资本由哪些部分组成？")
+
+    assert plan["exact_scope_doc_ids"] == []
+    assert plan["scoped_doc_ids"] == ["rules/rule-2.md"]
+    assert captured_doc_ids == [["rules/rule-2.md"]]
+    assert plan["recommended_paths"] == ["Knowledge_Base_MarkDown/rules/rule-2.md"]
 
 
 def test_detect_question_type_recognizes_formula_query():
