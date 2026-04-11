@@ -141,7 +141,7 @@ def validate_file_content(file_path: str, content: str) -> tuple[bool, str]:
     return True, ""
 
 
-def iter_json_payload_candidates(raw_text: str) -> list[str]:
+def list_json_payload_candidates(raw_text: str) -> list[str]:
     text = raw_text.strip()
     if not text:
         return []
@@ -190,7 +190,7 @@ def extract_json_payload(raw_text: str) -> Any:
     if not text:
         raise ValueError("Empty model response")
 
-    for candidate in iter_json_payload_candidates(text):
+    for candidate in list_json_payload_candidates(text):
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:

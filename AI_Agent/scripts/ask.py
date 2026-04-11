@@ -685,17 +685,19 @@ def _question_needs_history_context(question: str) -> bool:
         "后者",
         "该规则",
         "该要求",
-        "that",
-        "those",
-        "them",
-        "it ",
-        "this ",
-        "these ",
-        "former",
-        "latter",
-        "above",
-        "previous",
-        "earlier",
+    )
+    context_dependent_patterns = (
+        r"\bthat\b",
+        r"\bthose\b",
+        r"\bthem\b",
+        r"\bit\b",
+        r"\bthis\b",
+        r"\bthese\b",
+        r"\bformer\b",
+        r"\blatter\b",
+        r"\babove\b",
+        r"\bprevious\b",
+        r"\bearlier\b",
     )
     standalone_patterns = (
         r"规则第\d+号",
@@ -709,8 +711,11 @@ def _question_needs_history_context(question: str) -> bool:
 
     if normalized.startswith(context_dependent_prefixes):
         return True
-    if any(term in normalized for term in context_dependent_terms) and not any(
-        re.search(pattern, normalized) for pattern in standalone_patterns
+    has_standalone_pattern = any(re.search(pattern, normalized) for pattern in standalone_patterns)
+    if has_standalone_pattern:
+        return False
+    if any(term in normalized for term in context_dependent_terms) or any(
+        re.search(pattern, normalized) for pattern in context_dependent_patterns
     ):
         return True
     return False
