@@ -158,7 +158,6 @@ function ChatShell(props: {
         <div>
           <p className="app-header__eyebrow">中国偿二代研究助理</p>
           <h1 className="app-header__title">{props.config?.knowledge_base_name ?? "中国偿二代问答系统"}</h1>
-
         </div>
         <div className="app-header__controls">
           <span className="model-badge">{props.config?.models.reasoning ?? "gpt-5.4-mini"}</span>
