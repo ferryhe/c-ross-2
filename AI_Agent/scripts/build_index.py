@@ -72,7 +72,7 @@ _enc = None
 
 class _FallbackEncoder:
     def encode(self, text: str) -> list[str]:
-        return re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
+        return re.findall(r"\s+|[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
 
     def decode(self, tokens: list[str]) -> str:
         return "".join(tokens)

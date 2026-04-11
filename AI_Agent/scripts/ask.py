@@ -125,7 +125,7 @@ _ENCODER = None
 
 class _FallbackEncoder:
     def encode(self, text: str) -> list[str]:
-        return re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
+        return re.findall(r"\s+|[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
 
     def decode(self, tokens: list[str]) -> str:
         return "".join(tokens)
@@ -1040,6 +1040,27 @@ def run_agentic_query(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> dict[str, Any]:
     standalone_question = rewrite_question_with_history(client, question, history, model=model)
+    prepared_hits: list[dict[str, Any]] = []
+
+    def synthesize_answer(
+        prompt_question: str,
+        hits: list[dict[str, Any]],
+        response_language: str,
+        conversation_history: str | None,
+    ) -> str:
+        nonlocal prepared_hits
+        prepared_hits = prepare_answer_hits(prompt_question, hits)
+        return answer_from_hits(
+            client,
+            question,
+            prepared_hits,
+            language=response_language,
+            history=conversation_history,
+            interpreted_question=prompt_question,
+            hits_prepared=True,
+            model=model,
+        )
+
     engine = AgenticRagEngine(
         chat_fn=lambda messages, temperature=0.2: _invoke_chat_completion(
             client,
@@ -1053,16 +1074,7 @@ def run_agentic_query(
             k=round_k,
             similarity_threshold=threshold,
         ),
-        synthesize_fn=lambda prompt_question, hits, response_language, conversation_history: answer_from_hits(
-            client,
-            question,
-            hits,
-            language=response_language,
-            history=conversation_history,
-            interpreted_question=prompt_question,
-            hits_prepared=True,
-            model=model,
-        ),
+        synthesize_fn=synthesize_answer,
         language=language,
         max_iterations=max_iterations,
         top_k=k,
@@ -1070,7 +1082,7 @@ def run_agentic_query(
         synthesis_top_k=int(DEFAULT_SYNTHESIS_TOP_K) if DEFAULT_SYNTHESIS_TOP_K else max(k, min(10, k * 2)),
     )
     result = engine.run(standalone_question, history=history)
-    answer_hits = prepare_answer_hits(standalone_question, result.hits)
+    answer_hits = prepared_hits[:] if prepared_hits else prepare_answer_hits(standalone_question, result.hits)
     return {
         "mode": "agentic",
         "answer": result.answer,
