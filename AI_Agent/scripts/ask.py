@@ -642,6 +642,8 @@ def rewrite_question_with_history(
 
 
 def _question_needs_history_context(question: str) -> bool:
+    """Return True when a question looks like a context-dependent follow-up turn."""
+
     normalized = question.strip().lower()
     if not normalized:
         return False
@@ -703,10 +705,6 @@ def _question_needs_history_context(question: str) -> bool:
         r"规则第\d+号",
         r"附件\d+(?:-\d+)?",
         r"第\d+号",
-        r"\bcapital\b",
-        r"\brisk\b",
-        r"\bgovernance\b",
-        r"\bsolvency\b",
     )
 
     if normalized.startswith(context_dependent_prefixes):

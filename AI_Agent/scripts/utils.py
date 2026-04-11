@@ -142,6 +142,8 @@ def validate_file_content(file_path: str, content: str) -> tuple[bool, str]:
 
 
 def list_json_payload_candidates(raw_text: str) -> list[str]:
+    """Return trimmed fenced-JSON and raw-text candidates in parse order."""
+
     text = raw_text.strip()
     if not text:
         return []
@@ -150,6 +152,8 @@ def list_json_payload_candidates(raw_text: str) -> list[str]:
 
 
 def extract_balanced_json_substring(candidate: str) -> str | None:
+    """Extract the first balanced JSON object/array substring from free-form text."""
+
     start_positions = [index for index, char in enumerate(candidate) if char in "{["]
 
     for start in start_positions:
@@ -186,6 +190,8 @@ def extract_balanced_json_substring(candidate: str) -> str | None:
 
 
 def extract_json_payload(raw_text: str) -> Any:
+    """Parse JSON from model output, supporting fenced blocks and embedded substrings."""
+
     text = raw_text.strip()
     if not text:
         raise ValueError("Empty model response")
