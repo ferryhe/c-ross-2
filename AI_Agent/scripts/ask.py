@@ -24,7 +24,7 @@ from agentic_rag import AgenticRagEngine
 from build_index import derive_section_index_path, derive_section_meta_path
 from project_config import DEFAULT_OUTPUT_LANGUAGE, KNOWLEDGE_BASE_NAME, load_project_env
 from query_enhancements import rerank_hits
-from utils import retry_with_exponential_backoff
+from utils import extract_json_payload, retry_with_exponential_backoff
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
@@ -123,6 +123,14 @@ _MANIFEST_CACHE = None
 _ENCODER = None
 
 
+class _FallbackEncoder:
+    def encode(self, text: str) -> list[str]:
+        return re.findall(r"\s+|[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
+
+    def decode(self, tokens: list[str]) -> str:
+        return "".join(tokens)
+
+
 def _normalize_path(path: str) -> str:
     return path.replace("\\", "/").lower()
 
@@ -148,7 +156,10 @@ def get_index_artifact_paths() -> tuple[Path, Path, Path, Path]:
 def _get_encoder():
     global _ENCODER
     if _ENCODER is None:
-        _ENCODER = tiktoken.get_encoding("cl100k_base")
+        try:
+            _ENCODER = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _ENCODER = _FallbackEncoder()
     return _ENCODER
 
 
@@ -312,15 +323,27 @@ def get_system_prompt(language: str = "en") -> str:
     return base_prompt
 
 
-def format_user_prompt(question: str, context: str, history: str | None = None) -> str:
+def format_user_prompt(
+    question: str,
+    context: str,
+    history: str | None = None,
+    interpreted_question: str | None = None,
+) -> str:
     history_block = ""
     if history:
         history_block = (
             "Prior conversation (use only as conversational context, not as evidence):\n"
             f"{history}\n\n"
         )
+    interpreted_block = ""
+    if interpreted_question and interpreted_question.strip() and interpreted_question.strip() != question.strip():
+        interpreted_block = (
+            "Interpreted latest question for retrieval continuity:\n"
+            f"{interpreted_question}\n\n"
+        )
     return (
         history_block
+        + interpreted_block
         + f"You will receive full Markdown documents from the {KNOWLEDGE_BASE_NAME}. Each document already includes a numeric tag "
         "like [1], [2], etc., plus its file path. Use only these documents to answer the question. "
         "When citing information, cite only the numeric tag such as [1] or [2]. Do not repeat the file path or title in the answer body. "
@@ -573,6 +596,129 @@ def _invoke_chat_completion(
     return _create_chat_completion(client, messages, temperature=temperature)
 
 
+def rewrite_question_with_history(
+    client: OpenAI,
+    question: str,
+    history: str | None,
+    *,
+    model: str | None = None,
+) -> str:
+    if not history or not question.strip():
+        return question
+    if not _question_needs_history_context(question):
+        return question
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You rewrite the latest user message into a standalone retrieval question for a grounded regulatory QA system. "
+                "Return JSON only in the form {\"question\": \"...\"}. "
+                "Preserve the user's language, domain terms, rule numbers, formulas, comparisons, and requested scope. "
+                "Resolve pronouns and omitted references using the prior conversation. "
+                "Do not answer the question and do not add unsupported assumptions."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Prior conversation:\n{history}\n\n"
+                f"Latest user question:\n{question}\n\n"
+                "Return JSON only."
+            ),
+        },
+    ]
+
+    try:
+        payload = extract_json_payload(_invoke_chat_completion(client, messages, temperature=0.0, model=model))
+    except Exception:
+        return question
+
+    if isinstance(payload, dict):
+        rewritten = str(payload.get("question", "")).strip()
+        return rewritten or question
+
+    return question
+
+
+def _question_needs_history_context(question: str) -> bool:
+    """Return True when a question looks like a context-dependent follow-up turn."""
+
+    normalized = question.strip().lower()
+    if not normalized:
+        return False
+
+    context_dependent_prefixes = (
+        "那",
+        "那它",
+        "那这个",
+        "那这些",
+        "它",
+        "这个",
+        "这些",
+        "该",
+        "其",
+        "前者",
+        "后者",
+        "再",
+        "继续",
+        "另外",
+        "还有",
+        "那么",
+        "then",
+        "what about",
+        "how about",
+        "and ",
+        "also ",
+        "what else",
+        "compare that",
+    )
+    context_dependent_terms = (
+        "它",
+        "这个",
+        "这些",
+        "那个",
+        "上述",
+        "上面",
+        "前面",
+        "刚才",
+        "之前",
+        "前者",
+        "后者",
+        "该规则",
+        "该要求",
+    )
+    context_dependent_patterns = (
+        r"\bthat\b",
+        r"\bthose\b",
+        r"\bthem\b",
+        r"\bit\b",
+        r"\bthis\b",
+        r"\bthese\b",
+        r"\bformer\b",
+        r"\blatter\b",
+        r"\babove\b",
+        r"\bprevious\b",
+        r"\bearlier\b",
+    )
+    standalone_patterns = (
+        r"规则第\d+号",
+        r"附件\d+(?:-\d+)?",
+        r"第\d+号",
+    )
+
+    if normalized.startswith(context_dependent_prefixes):
+        return True
+    has_standalone_pattern = any(re.search(pattern, normalized) for pattern in standalone_patterns)
+    if has_standalone_pattern:
+        return False
+    if any(term in normalized for term in context_dependent_terms) or any(
+        re.search(pattern, normalized) for pattern in context_dependent_patterns
+    ):
+        return True
+    return False
+
+
 def _hit_token_count(hit: dict[str, Any]) -> int:
     token_count = hit.get("token_count")
     if isinstance(token_count, int) and token_count > 0:
@@ -822,17 +968,27 @@ def answer_from_hits(
     *,
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
+    interpreted_question: str | None = None,
+    hits_prepared: bool = False,
     model: str | None = None,
 ) -> str:
     if not hits:
         return INSUFFICIENT_INFO_RESPONSE
-    answer_hits = prepare_answer_hits(question, hits)
+    answer_hits = hits if hits_prepared else prepare_answer_hits(interpreted_question or question, hits)
     if not answer_hits:
         return INSUFFICIENT_INFO_RESPONSE
 
     messages = [
         {"role": "system", "content": get_system_prompt(language)},
-        {"role": "user", "content": format_user_prompt(question, render_context(answer_hits), history)},
+        {
+            "role": "user",
+            "content": format_user_prompt(
+                question,
+                render_context(answer_hits),
+                history,
+                interpreted_question=interpreted_question,
+            ),
+        },
     ]
     return _invoke_chat_completion(client, messages, model=model)
 
@@ -847,15 +1003,25 @@ def run_standard_query(
     k: int = DEFAULT_TOP_K,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> dict[str, Any]:
-    hits = retrieve(client, question, k=k, similarity_threshold=similarity_threshold)
-    answer_hits = prepare_answer_hits(question, hits)
-    answer = answer_from_hits(client, question, answer_hits, language=language, history=history, model=model)
+    standalone_question = rewrite_question_with_history(client, question, history, model=model)
+    hits = retrieve(client, standalone_question, k=k, similarity_threshold=similarity_threshold)
+    answer_hits = prepare_answer_hits(standalone_question, hits)
+    answer = answer_from_hits(
+        client,
+        question,
+        answer_hits,
+        language=language,
+        history=history,
+        interpreted_question=standalone_question,
+        hits_prepared=True,
+        model=model,
+    )
     return {
         "mode": "standard",
         "answer": answer,
         "hits": answer_hits,
-        "sub_queries": [question],
-        "executed_queries": [question] if answer_hits else [],
+        "sub_queries": [standalone_question],
+        "executed_queries": [standalone_question] if answer_hits else [],
         "iterations": 1 if answer_hits else 0,
         "reflection_notes": [],
         "retrieval_history": [],
@@ -873,6 +1039,28 @@ def run_agentic_query(
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> dict[str, Any]:
+    standalone_question = rewrite_question_with_history(client, question, history, model=model)
+    prepared_hits: list[dict[str, Any]] | None = None
+
+    def synthesize_answer(
+        prompt_question: str,
+        hits: list[dict[str, Any]],
+        response_language: str,
+        conversation_history: str | None,
+    ) -> str:
+        nonlocal prepared_hits
+        prepared_hits = prepare_answer_hits(prompt_question, hits)
+        return answer_from_hits(
+            client,
+            question,
+            prepared_hits,
+            language=response_language,
+            history=conversation_history,
+            interpreted_question=prompt_question,
+            hits_prepared=True,
+            model=model,
+        )
+
     engine = AgenticRagEngine(
         chat_fn=lambda messages, temperature=0.2: _invoke_chat_completion(
             client,
@@ -886,22 +1074,15 @@ def run_agentic_query(
             k=round_k,
             similarity_threshold=threshold,
         ),
-        synthesize_fn=lambda prompt_question, hits, response_language, conversation_history: answer_from_hits(
-            client,
-            prompt_question,
-            hits,
-            language=response_language,
-            history=conversation_history,
-            model=model,
-        ),
+        synthesize_fn=synthesize_answer,
         language=language,
         max_iterations=max_iterations,
         top_k=k,
         similarity_threshold=similarity_threshold,
         synthesis_top_k=int(DEFAULT_SYNTHESIS_TOP_K) if DEFAULT_SYNTHESIS_TOP_K else max(k, min(10, k * 2)),
     )
-    result = engine.run(question, history=history)
-    answer_hits = prepare_answer_hits(question, result.hits)
+    result = engine.run(standalone_question, history=history)
+    answer_hits = prepared_hits[:] if prepared_hits is not None else prepare_answer_hits(standalone_question, result.hits)
     return {
         "mode": "agentic",
         "answer": result.answer,

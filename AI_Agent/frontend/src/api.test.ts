@@ -42,13 +42,13 @@ describe("api helpers", () => {
   it("loads chat config from the backend", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        knowledge_base_name: "中国偿二代问答系统",
-        default_model_mode: "general",
-        models: {
-          general: "gpt-4.1",
-          reasoning: "gpt-5.4-mini",
-        },
+        json: async () => ({
+          knowledge_base_name: "中国偿二代问答系统",
+          default_model_mode: "reasoning",
+          models: {
+            general: "gpt-4.1",
+            reasoning: "gpt-5.4-mini",
+          },
         rag_mode: "agentic",
       }),
     });
@@ -56,6 +56,7 @@ describe("api helpers", () => {
 
     const result = await fetchConfig();
 
+    expect(result.default_model_mode).toBe("reasoning");
     expect(result.models.general).toBe("gpt-4.1");
     expect(result.models.reasoning).toBe("gpt-5.4-mini");
   });

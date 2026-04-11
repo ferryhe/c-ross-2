@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchConfig, sendChatRequest } from "./api";
 import { MarkdownMessage } from "./markdown";
-import type { ChatConfigResponse, ModelMode, SourceItem } from "./types";
+import type { ChatConfigResponse, SourceItem } from "./types";
 
 const STORAGE_KEY = "cross2-assistant-ui-thread";
 const EMPTY_STATE_SUGGESTIONS = [
@@ -133,14 +133,18 @@ function EmptyState() {
 function ChatShell(props: {
   config: ChatConfigResponse | null;
   configError: string | null;
-  modelMode: ModelMode;
-  setModelMode: (mode: ModelMode) => void;
 }) {
   const runtime = useAssistantRuntime();
   const threadRuntime = useThreadRuntime();
   const messages = useThread((state) => state.messages);
   const isRunning = useThread((state) => state.isRunning);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const resetThread = () => {
+    runtime.thread.reset();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -152,41 +156,12 @@ function ChatShell(props: {
 
       <header className="app-header">
         <div>
-          <p className="app-header__eyebrow">assistant-ui</p>
+          <p className="app-header__eyebrow">中国偿二代研究助理</p>
           <h1 className="app-header__title">{props.config?.knowledge_base_name ?? "中国偿二代问答系统"}</h1>
+          <p className="app-header__description">默认使用 gpt-5.4-mini，通过多轮上下文持续跟进监管问答。</p>
         </div>
         <div className="app-header__controls">
-          <div className="mode-switch" role="tablist" aria-label="模型模式">
-            <button
-              className={props.modelMode === "general" ? "mode-switch__button is-active" : "mode-switch__button"}
-              onClick={() => props.setModelMode("general")}
-              type="button"
-            >
-              一般
-              <span>{props.config?.models.general ?? "gpt-4.1"}</span>
-            </button>
-            <button
-              className={props.modelMode === "reasoning" ? "mode-switch__button is-active" : "mode-switch__button"}
-              onClick={() => props.setModelMode("reasoning")}
-              type="button"
-            >
-              推理
-              <span>{props.config?.models.reasoning ?? "gpt-5.4-mini"}</span>
-            </button>
-          </div>
-
-          <button
-            className="secondary-button"
-            onClick={() => {
-              runtime.thread.reset();
-              if (typeof window !== "undefined") {
-                window.localStorage.removeItem(STORAGE_KEY);
-              }
-            }}
-            type="button"
-          >
-            新会话
-          </button>
+          <span className="model-badge">{props.config?.models.reasoning ?? "gpt-5.4-mini"}</span>
         </div>
       </header>
 
@@ -208,22 +183,30 @@ function ChatShell(props: {
       </ThreadPrimitive.Root>
 
       <footer className="composer-shell">
-        <ComposerPrimitive.Root className="composer-card">
-          <ComposerPrimitive.Input
-            className="composer-input"
-            minRows={1}
-            maxRows={10}
-            placeholder="请输入与偿付能力监管规则相关的问题"
-          />
-          <div className="composer-actions">
-            {isRunning ? (
-              <button className="secondary-button" onClick={() => threadRuntime.cancelRun()} type="button">
-                停止
-              </button>
-            ) : null}
-            <ComposerPrimitive.Send className="primary-button">发送</ComposerPrimitive.Send>
+        <div className="composer-shell__inner">
+          <div className="composer-shell__utility">
+            <button className="utility-button" onClick={resetThread} type="button">
+              新对话
+            </button>
+            <span className="composer-shell__hint">Shift + Enter 换行</span>
           </div>
-        </ComposerPrimitive.Root>
+          <ComposerPrimitive.Root className="composer-card">
+            <ComposerPrimitive.Input
+              className="composer-input"
+              minRows={1}
+              maxRows={10}
+              placeholder="请输入与偿付能力监管规则相关的问题"
+            />
+            <div className="composer-actions">
+              {isRunning ? (
+                <button className="secondary-button secondary-button--compact" onClick={() => threadRuntime.cancelRun()} type="button">
+                  停止
+                </button>
+              ) : null}
+              <ComposerPrimitive.Send className="primary-button primary-button--compact">发送</ComposerPrimitive.Send>
+            </div>
+          </ComposerPrimitive.Root>
+        </div>
       </footer>
     </div>
   );
@@ -232,19 +215,12 @@ function ChatShell(props: {
 export default function App() {
   const [config, setConfig] = useState<ChatConfigResponse | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
-  const [modelMode, setModelMode] = useState<ModelMode>("general");
-  const modelModeRef = useRef<ModelMode>("general");
-
-  useEffect(() => {
-    modelModeRef.current = modelMode;
-  }, [modelMode]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchConfig(controller.signal)
       .then((result) => {
         setConfig(result);
-        setModelMode(result.default_model_mode);
       })
       .catch((error: Error) => {
         setConfigError(error.message);
@@ -258,7 +234,7 @@ export default function App() {
       async run({ messages, abortSignal }) {
         const response = await sendChatRequest({
           messages,
-          modelMode: modelModeRef.current,
+          modelMode: "reasoning",
           signal: abortSignal,
         });
 
@@ -287,12 +263,7 @@ export default function App() {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatShell
-        config={config}
-        configError={configError}
-        modelMode={modelMode}
-        setModelMode={setModelMode}
-      />
+      <ChatShell config={config} configError={configError} />
     </AssistantRuntimeProvider>
   );
 }

@@ -47,12 +47,12 @@ def _normalize_model_mode(value: str | None) -> Literal["general", "reasoning"]:
     candidate = (value or "").strip().lower()
     if candidate in VALID_MODEL_MODES:
         return candidate  # type: ignore[return-value]
-    return "general"
+    return "reasoning"
 
 
 DEFAULT_GENERAL_MODEL = os.getenv("GENERAL_MODEL", "gpt-4.1")
 DEFAULT_REASONING_MODEL = os.getenv("REASONING_MODEL", "gpt-5.4-mini")
-DEFAULT_MODEL_MODE = _normalize_model_mode(os.getenv("DEFAULT_MODEL_MODE", "general"))
+DEFAULT_MODEL_MODE = _normalize_model_mode(os.getenv("DEFAULT_MODEL_MODE", "reasoning"))
 
 
 class ChatMessage(BaseModel):

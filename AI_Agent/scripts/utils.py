@@ -1,6 +1,8 @@
 """Utility functions for API calls with retry logic and error handling."""
 
 import asyncio
+import json
+import re
 import time
 from functools import wraps
 from typing import Any, Callable, TypeVar
@@ -137,3 +139,76 @@ def validate_file_content(file_path: str, content: str) -> tuple[bool, str]:
             return False, f"File {file_path} appears to be corrupted or binary (only {printable_ratio:.1%} printable)"
     
     return True, ""
+
+
+def list_json_payload_candidates(raw_text: str) -> list[str]:
+    """Return trimmed fenced-JSON and raw-text candidates in parse order."""
+
+    text = raw_text.strip()
+    if not text:
+        return []
+    fenced = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    return [candidate.strip() for candidate in [*fenced, text] if candidate.strip()]
+
+
+def extract_balanced_json_substring(candidate: str) -> str | None:
+    """Extract the first balanced JSON object/array substring from free-form text."""
+
+    start_positions = [index for index, char in enumerate(candidate) if char in "{["]
+
+    for start in start_positions:
+        opening = candidate[start]
+        closing = "}" if opening == "{" else "]"
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for index in range(start, len(candidate)):
+            char = candidate[index]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+                continue
+
+            if char == opening:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+                if depth == 0:
+                    return candidate[start : index + 1]
+
+    return None
+
+
+def extract_json_payload(raw_text: str) -> Any:
+    """Parse JSON from model output, supporting fenced blocks and embedded substrings."""
+
+    text = raw_text.strip()
+    if not text:
+        raise ValueError("Empty model response")
+
+    for candidate in list_json_payload_candidates(text):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+        json_substring = extract_balanced_json_substring(candidate)
+        if json_substring is None:
+            continue
+
+        try:
+            return json.loads(json_substring)
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"Unable to parse JSON payload: {raw_text}")
