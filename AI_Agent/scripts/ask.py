@@ -123,6 +123,14 @@ _MANIFEST_CACHE = None
 _ENCODER = None
 
 
+class _FallbackEncoder:
+    def encode(self, text: str) -> list[str]:
+        return re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
+
+    def decode(self, tokens: list[str]) -> str:
+        return " ".join(tokens)
+
+
 def _normalize_path(path: str) -> str:
     return path.replace("\\", "/").lower()
 
@@ -148,7 +156,10 @@ def get_index_artifact_paths() -> tuple[Path, Path, Path, Path]:
 def _get_encoder():
     global _ENCODER
     if _ENCODER is None:
-        _ENCODER = tiktoken.get_encoding("cl100k_base")
+        try:
+            _ENCODER = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _ENCODER = _FallbackEncoder()
     return _ENCODER
 
 

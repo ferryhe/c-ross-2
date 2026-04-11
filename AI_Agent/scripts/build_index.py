@@ -70,11 +70,22 @@ DISPLAY_MATH_PATTERN = re.compile(r"^\s*\$\$\s*$")
 _enc = None
 
 
+class _FallbackEncoder:
+    def encode(self, text: str) -> list[str]:
+        return re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
+
+    def decode(self, tokens: list[str]) -> str:
+        return " ".join(tokens)
+
+
 def get_encoder():
     """Get tiktoken encoder, loading it lazily."""
     global _enc
     if _enc is None:
-        _enc = tiktoken.get_encoding("cl100k_base")
+        try:
+            _enc = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _enc = _FallbackEncoder()
     return _enc
 
 
