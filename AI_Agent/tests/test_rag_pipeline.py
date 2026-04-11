@@ -927,6 +927,63 @@ class TestAgenticQuery:
         assert captured["hits_prepared"] is True
         assert result["hits"] == prepared_hits
 
+    def test_run_agentic_query_reuses_empty_prepared_hits_without_reprepare(self, monkeypatch):
+        captured = {"prepare_calls": 0}
+
+        monkeypatch.setattr(
+            ask_module,
+            "rewrite_question_with_history",
+            lambda client, question, history, model=None: question,
+        )
+
+        def fake_prepare(question, hits):
+            captured["prepare_calls"] += 1
+            return []
+
+        def fake_answer_from_hits(
+            client,
+            question,
+            hits,
+            *,
+            language="en",
+            history=None,
+            interpreted_question=None,
+            hits_prepared=False,
+            model=None,
+        ):
+            return ask_module.INSUFFICIENT_INFO_RESPONSE
+
+        class StubEngine:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def run(self, question, history=None):
+                answer = self.kwargs["synthesize_fn"](question, [], "zh", history)
+                return SimpleNamespace(
+                    answer=answer,
+                    hits=[],
+                    sub_queries=[question],
+                    executed_queries=[question],
+                    retrieval_history=[],
+                    reflection_notes=[],
+                    iterations=1,
+                )
+
+        monkeypatch.setattr(ask_module, "prepare_answer_hits", fake_prepare)
+        monkeypatch.setattr(ask_module, "answer_from_hits", fake_answer_from_hits)
+        monkeypatch.setattr(ask_module, "AgenticRagEngine", StubEngine)
+
+        result = ask_module.run_agentic_query(
+            client=object(),
+            question="那它的最低资本公式呢？",
+            language="zh",
+            history="Turn 1\nRole: user\nText: 规则第2号主要涉及什么内容？",
+            model="gpt-5.4-mini",
+        )
+
+        assert captured["prepare_calls"] == 1
+        assert result["hits"] == []
+
     def test_agentic_query_applies_global_cap_before_synthesis(self):
         captured = {}
 

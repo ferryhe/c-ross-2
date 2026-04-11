@@ -1040,7 +1040,7 @@ def run_agentic_query(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> dict[str, Any]:
     standalone_question = rewrite_question_with_history(client, question, history, model=model)
-    prepared_hits: list[dict[str, Any]] = []
+    prepared_hits: list[dict[str, Any]] | None = None
 
     def synthesize_answer(
         prompt_question: str,
@@ -1082,7 +1082,7 @@ def run_agentic_query(
         synthesis_top_k=int(DEFAULT_SYNTHESIS_TOP_K) if DEFAULT_SYNTHESIS_TOP_K else max(k, min(10, k * 2)),
     )
     result = engine.run(standalone_question, history=history)
-    answer_hits = prepared_hits[:] if prepared_hits else prepare_answer_hits(standalone_question, result.hits)
+    answer_hits = prepared_hits[:] if prepared_hits is not None else prepare_answer_hits(standalone_question, result.hits)
     return {
         "mode": "agentic",
         "answer": result.answer,
