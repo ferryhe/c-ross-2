@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 from typing import Callable
 
 try:
     from .query_enhancements import build_domain_context, rerank_hits
+    from .utils import extract_json_payload
 except ImportError:
     from query_enhancements import build_domain_context, rerank_hits
+    from utils import extract_json_payload
 
 
 ChatFn = Callable[[list[dict], float], str]
@@ -26,42 +26,6 @@ class AgenticRagResult:
     retrieval_history: list[dict]
     reflection_notes: list[str]
     iterations: int
-
-
-def _extract_json_payload(raw_text: str):
-    text = raw_text.strip()
-    if not text:
-        raise ValueError("Empty model response")
-
-    fenced = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
-    candidates = fenced + [text]
-
-    for candidate in candidates:
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
-
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(candidate[start : end + 1])
-            except json.JSONDecodeError:
-                pass
-
-        start = candidate.find("[")
-        end = candidate.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(candidate[start : end + 1])
-            except json.JSONDecodeError:
-                pass
-
-    raise ValueError(f"Unable to parse JSON payload: {raw_text}")
 
 
 def _normalize_queries(values: list[str], limit: int) -> list[str]:
@@ -147,7 +111,7 @@ class AgenticRagEngine:
         ]
 
         try:
-            payload = _extract_json_payload(self.chat_fn(messages, 0.0))
+            payload = extract_json_payload(self.chat_fn(messages, 0.0))
             if isinstance(payload, dict):
                 queries = payload.get("sub_queries", [])
             elif isinstance(payload, list):
@@ -216,7 +180,7 @@ class AgenticRagEngine:
         )
 
         try:
-            payload = _extract_json_payload(self.chat_fn(messages, 0.0))
+            payload = extract_json_payload(self.chat_fn(messages, 0.0))
             if not isinstance(payload, dict):
                 raise ValueError("Expected dict response")
             decision = str(payload.get("decision", "synthesize")).strip().lower()

@@ -24,7 +24,7 @@ from agentic_rag import AgenticRagEngine
 from build_index import derive_section_index_path, derive_section_meta_path
 from project_config import DEFAULT_OUTPUT_LANGUAGE, KNOWLEDGE_BASE_NAME, load_project_env
 from query_enhancements import rerank_hits
-from utils import retry_with_exponential_backoff
+from utils import extract_json_payload, retry_with_exponential_backoff
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
@@ -128,7 +128,7 @@ class _FallbackEncoder:
         return re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
 
     def decode(self, tokens: list[str]) -> str:
-        return " ".join(tokens)
+        return "".join(tokens)
 
 
 def _normalize_path(path: str) -> str:
@@ -596,34 +596,6 @@ def _invoke_chat_completion(
     return _create_chat_completion(client, messages, temperature=temperature)
 
 
-def _extract_json_payload(raw_text: str) -> Any:
-    text = raw_text.strip()
-    if not text:
-        raise ValueError("Empty model response")
-
-    fenced = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
-    candidates = fenced + [text]
-
-    for candidate in candidates:
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
-
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(candidate[start : end + 1])
-            except json.JSONDecodeError:
-                pass
-
-    raise ValueError(f"Unable to parse JSON payload: {raw_text}")
-
-
 def rewrite_question_with_history(
     client: OpenAI,
     question: str,
@@ -632,6 +604,8 @@ def rewrite_question_with_history(
     model: str | None = None,
 ) -> str:
     if not history or not question.strip():
+        return question
+    if not _question_needs_history_context(question):
         return question
 
     messages = [
@@ -656,7 +630,7 @@ def rewrite_question_with_history(
     ]
 
     try:
-        payload = _extract_json_payload(_invoke_chat_completion(client, messages, temperature=0.0, model=model))
+        payload = extract_json_payload(_invoke_chat_completion(client, messages, temperature=0.0, model=model))
     except Exception:
         return question
 
@@ -665,6 +639,73 @@ def rewrite_question_with_history(
         return rewritten or question
 
     return question
+
+
+def _question_needs_history_context(question: str) -> bool:
+    normalized = question.strip().lower()
+    if not normalized:
+        return False
+
+    context_dependent_prefixes = (
+        "那",
+        "那它",
+        "那这个",
+        "那这些",
+        "它",
+        "这个",
+        "这些",
+        "该",
+        "其",
+        "前者",
+        "后者",
+        "再",
+        "继续",
+        "另外",
+        "还有",
+        "那么",
+        "then",
+        "what about",
+        "how about",
+        "and ",
+        "also ",
+        "what else",
+        "compare that",
+    )
+    context_dependent_terms = (
+        "它",
+        "这个",
+        "这些",
+        "那个",
+        "上述",
+        "上面",
+        "前面",
+        "刚才",
+        "之前",
+        "前者",
+        "后者",
+        "该规则",
+        "该要求",
+        "that",
+        "those",
+        "them",
+        "it ",
+        "this ",
+        "these ",
+        "former",
+        "latter",
+        "above",
+        "previous",
+        "earlier",
+    )
+    standalone_indicators = ("规则第", "附件", "第", "capital", "risk", "governance", "solvency")
+
+    if normalized.startswith(context_dependent_prefixes):
+        return True
+    if any(term in normalized for term in context_dependent_terms) and not any(
+        indicator in normalized for indicator in standalone_indicators
+    ):
+        return True
+    return False
 
 
 def _hit_token_count(hit: dict[str, Any]) -> int:
@@ -917,11 +958,12 @@ def answer_from_hits(
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
     interpreted_question: str | None = None,
+    hits_prepared: bool = False,
     model: str | None = None,
 ) -> str:
     if not hits:
         return INSUFFICIENT_INFO_RESPONSE
-    answer_hits = prepare_answer_hits(interpreted_question or question, hits)
+    answer_hits = hits if hits_prepared else prepare_answer_hits(interpreted_question or question, hits)
     if not answer_hits:
         return INSUFFICIENT_INFO_RESPONSE
 
@@ -960,6 +1002,7 @@ def run_standard_query(
         language=language,
         history=history,
         interpreted_question=standalone_question,
+        hits_prepared=True,
         model=model,
     )
     return {
@@ -1006,6 +1049,7 @@ def run_agentic_query(
             language=response_language,
             history=conversation_history,
             interpreted_question=prompt_question,
+            hits_prepared=True,
             model=model,
         ),
         language=language,

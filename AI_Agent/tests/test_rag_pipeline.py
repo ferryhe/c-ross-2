@@ -720,6 +720,25 @@ class TestAgenticQuery:
 
         assert result == "规则第2号的最低资本公式是什么？"
 
+    def test_rewrite_question_with_history_skips_self_contained_question(self, monkeypatch):
+        called = {"value": False}
+
+        def fake_chat_completion(client, messages, temperature=0.0, *, model=None):
+            called["value"] = True
+            return '{"question": "规则第2号的最低资本公式是什么？"}'
+
+        monkeypatch.setattr(ask_module, "_create_chat_completion", fake_chat_completion)
+
+        result = ask_module.rewrite_question_with_history(
+            client=object(),
+            question="规则第2号的最低资本公式是什么？",
+            history="Turn 1\nRole: user\nText: 规则第2号主要涉及什么内容？",
+            model="gpt-5.4-mini",
+        )
+
+        assert result == "规则第2号的最低资本公式是什么？"
+        assert called["value"] is False
+
     def test_answer_from_hits_includes_interpreted_question(self, monkeypatch):
         captured = {}
 
@@ -742,6 +761,29 @@ class TestAgenticQuery:
 
         assert "Interpreted latest question for retrieval continuity" in captured["prompt"]
         assert "规则第2号的最低资本公式是什么？" in captured["prompt"]
+
+    def test_answer_from_hits_skips_prepare_when_hits_already_prepared(self, monkeypatch):
+        monkeypatch.setattr(
+            ask_module,
+            "prepare_answer_hits",
+            lambda question, hits: (_ for _ in ()).throw(AssertionError("should not re-prepare hits")),
+        )
+        monkeypatch.setattr(
+            ask_module,
+            "_create_chat_completion",
+            lambda client, messages, temperature=0.2, *, model=None: "ok",
+        )
+
+        answer = ask_module.answer_from_hits(
+            client=object(),
+            question="那它的最低资本公式呢？",
+            hits=[{"path": "Knowledge_Base_MarkDown/rules/rule-2.md", "text": "最低资本公式见第2号规则。"}],
+            language="zh",
+            interpreted_question="规则第2号的最低资本公式是什么？",
+            hits_prepared=True,
+        )
+
+        assert answer == "ok"
 
     def test_run_standard_query_uses_history_rewrite_for_retrieval(self, monkeypatch):
         requested_queries = []

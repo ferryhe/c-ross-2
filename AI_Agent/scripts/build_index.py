@@ -75,7 +75,7 @@ class _FallbackEncoder:
         return re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]", text)
 
     def decode(self, tokens: list[str]) -> str:
-        return " ".join(tokens)
+        return "".join(tokens)
 
 
 def get_encoder():

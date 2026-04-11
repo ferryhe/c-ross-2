@@ -657,6 +657,7 @@ def run_regulatory_query(
         language=language,
         history=history,
         interpreted_question=standalone_question,
+        hits_prepared=True,
         model=model,
     )
 
