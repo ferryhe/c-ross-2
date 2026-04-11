@@ -763,10 +763,13 @@ class TestAgenticQuery:
         assert "规则第2号的最低资本公式是什么？" in captured["prompt"]
 
     def test_answer_from_hits_skips_prepare_when_hits_already_prepared(self, monkeypatch):
+        def fail_if_prepare_called(question, hits):
+            pytest.fail("should not re-prepare hits")
+
         monkeypatch.setattr(
             ask_module,
             "prepare_answer_hits",
-            lambda question, hits: (_ for _ in ()).throw(AssertionError("should not re-prepare hits")),
+            fail_if_prepare_called,
         )
         monkeypatch.setattr(
             ask_module,
