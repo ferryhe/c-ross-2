@@ -312,15 +312,27 @@ def get_system_prompt(language: str = "en") -> str:
     return base_prompt
 
 
-def format_user_prompt(question: str, context: str, history: str | None = None) -> str:
+def format_user_prompt(
+    question: str,
+    context: str,
+    history: str | None = None,
+    interpreted_question: str | None = None,
+) -> str:
     history_block = ""
     if history:
         history_block = (
             "Prior conversation (use only as conversational context, not as evidence):\n"
             f"{history}\n\n"
         )
+    interpreted_block = ""
+    if interpreted_question and interpreted_question.strip() and interpreted_question.strip() != question.strip():
+        interpreted_block = (
+            "Interpreted latest question for retrieval continuity:\n"
+            f"{interpreted_question}\n\n"
+        )
     return (
         history_block
+        + interpreted_block
         + f"You will receive full Markdown documents from the {KNOWLEDGE_BASE_NAME}. Each document already includes a numeric tag "
         "like [1], [2], etc., plus its file path. Use only these documents to answer the question. "
         "When citing information, cite only the numeric tag such as [1] or [2]. Do not repeat the file path or title in the answer body. "
@@ -573,6 +585,77 @@ def _invoke_chat_completion(
     return _create_chat_completion(client, messages, temperature=temperature)
 
 
+def _extract_json_payload(raw_text: str) -> Any:
+    text = raw_text.strip()
+    if not text:
+        raise ValueError("Empty model response")
+
+    fenced = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    candidates = fenced + [text]
+
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(candidate[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+
+    raise ValueError(f"Unable to parse JSON payload: {raw_text}")
+
+
+def rewrite_question_with_history(
+    client: OpenAI,
+    question: str,
+    history: str | None,
+    *,
+    model: str | None = None,
+) -> str:
+    if not history or not question.strip():
+        return question
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You rewrite the latest user message into a standalone retrieval question for a grounded regulatory QA system. "
+                "Return JSON only in the form {\"question\": \"...\"}. "
+                "Preserve the user's language, domain terms, rule numbers, formulas, comparisons, and requested scope. "
+                "Resolve pronouns and omitted references using the prior conversation. "
+                "Do not answer the question and do not add unsupported assumptions."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Prior conversation:\n{history}\n\n"
+                f"Latest user question:\n{question}\n\n"
+                "Return JSON only."
+            ),
+        },
+    ]
+
+    try:
+        payload = _extract_json_payload(_invoke_chat_completion(client, messages, temperature=0.0, model=model))
+    except Exception:
+        return question
+
+    if isinstance(payload, dict):
+        rewritten = str(payload.get("question", "")).strip()
+        return rewritten or question
+
+    return question
+
+
 def _hit_token_count(hit: dict[str, Any]) -> int:
     token_count = hit.get("token_count")
     if isinstance(token_count, int) and token_count > 0:
@@ -822,17 +905,26 @@ def answer_from_hits(
     *,
     language: str = DEFAULT_LANGUAGE,
     history: str | None = None,
+    interpreted_question: str | None = None,
     model: str | None = None,
 ) -> str:
     if not hits:
         return INSUFFICIENT_INFO_RESPONSE
-    answer_hits = prepare_answer_hits(question, hits)
+    answer_hits = prepare_answer_hits(interpreted_question or question, hits)
     if not answer_hits:
         return INSUFFICIENT_INFO_RESPONSE
 
     messages = [
         {"role": "system", "content": get_system_prompt(language)},
-        {"role": "user", "content": format_user_prompt(question, render_context(answer_hits), history)},
+        {
+            "role": "user",
+            "content": format_user_prompt(
+                question,
+                render_context(answer_hits),
+                history,
+                interpreted_question=interpreted_question,
+            ),
+        },
     ]
     return _invoke_chat_completion(client, messages, model=model)
 
@@ -847,15 +939,24 @@ def run_standard_query(
     k: int = DEFAULT_TOP_K,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> dict[str, Any]:
-    hits = retrieve(client, question, k=k, similarity_threshold=similarity_threshold)
-    answer_hits = prepare_answer_hits(question, hits)
-    answer = answer_from_hits(client, question, answer_hits, language=language, history=history, model=model)
+    standalone_question = rewrite_question_with_history(client, question, history, model=model)
+    hits = retrieve(client, standalone_question, k=k, similarity_threshold=similarity_threshold)
+    answer_hits = prepare_answer_hits(standalone_question, hits)
+    answer = answer_from_hits(
+        client,
+        question,
+        answer_hits,
+        language=language,
+        history=history,
+        interpreted_question=standalone_question,
+        model=model,
+    )
     return {
         "mode": "standard",
         "answer": answer,
         "hits": answer_hits,
-        "sub_queries": [question],
-        "executed_queries": [question] if answer_hits else [],
+        "sub_queries": [standalone_question],
+        "executed_queries": [standalone_question] if answer_hits else [],
         "iterations": 1 if answer_hits else 0,
         "reflection_notes": [],
         "retrieval_history": [],
@@ -873,6 +974,7 @@ def run_agentic_query(
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> dict[str, Any]:
+    standalone_question = rewrite_question_with_history(client, question, history, model=model)
     engine = AgenticRagEngine(
         chat_fn=lambda messages, temperature=0.2: _invoke_chat_completion(
             client,
@@ -888,10 +990,11 @@ def run_agentic_query(
         ),
         synthesize_fn=lambda prompt_question, hits, response_language, conversation_history: answer_from_hits(
             client,
-            prompt_question,
+            question,
             hits,
             language=response_language,
             history=conversation_history,
+            interpreted_question=prompt_question,
             model=model,
         ),
         language=language,
@@ -900,8 +1003,8 @@ def run_agentic_query(
         similarity_threshold=similarity_threshold,
         synthesis_top_k=int(DEFAULT_SYNTHESIS_TOP_K) if DEFAULT_SYNTHESIS_TOP_K else max(k, min(10, k * 2)),
     )
-    result = engine.run(question, history=history)
-    answer_hits = prepare_answer_hits(question, result.hits)
+    result = engine.run(standalone_question, history=history)
+    answer_hits = prepare_answer_hits(standalone_question, result.hits)
     return {
         "mode": "agentic",
         "answer": result.answer,

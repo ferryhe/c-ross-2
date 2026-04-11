@@ -619,16 +619,17 @@ def run_regulatory_query(
 ) -> dict[str, Any]:
     ask_module = _get_ask_module()
     threshold = ask_module.DEFAULT_SIMILARITY_THRESHOLD if similarity_threshold is None else similarity_threshold
-    catalog_answer = ask_module.try_answer_catalog_query(question, language=language)
+    standalone_question = ask_module.rewrite_question_with_history(client, question, history, model=model)
+    catalog_answer = ask_module.try_answer_catalog_query(standalone_question, language=language)
     if catalog_answer is not None:
         return {
             **catalog_answer,
             "mode": "regulatory-engine",
             "engine_mode": "professional",
-            "plan": plan_regulatory_query(question),
+            "plan": plan_regulatory_query(standalone_question),
         }
 
-    plan = plan_regulatory_query(question)
+    plan = plan_regulatory_query(standalone_question)
     aggregated_hits: list[dict[str, Any]] = []
 
     for scoped_query in plan["scoped_queries"]:
@@ -643,14 +644,19 @@ def run_regulatory_query(
 
     catalog_hits = _catalog_snippets_from_title_hits(plan["question_type"], plan["title_hits"])
     merged_hits = _merge_hits(catalog_hits, aggregated_hits)
-    reranked_hits = ask_module.rerank_hits(question, merged_hits, top_k=min(len(merged_hits), max(8, k * 2))) if merged_hits else []
-    answer_hits = ask_module.prepare_answer_hits(question, reranked_hits)
+    reranked_hits = (
+        ask_module.rerank_hits(standalone_question, merged_hits, top_k=min(len(merged_hits), max(8, k * 2)))
+        if merged_hits
+        else []
+    )
+    answer_hits = ask_module.prepare_answer_hits(standalone_question, reranked_hits)
     answer = ask_module.answer_from_hits(
         client,
         question,
         answer_hits,
         language=language,
         history=history,
+        interpreted_question=standalone_question,
         model=model,
     )
 

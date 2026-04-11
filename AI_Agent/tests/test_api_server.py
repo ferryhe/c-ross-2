@@ -16,11 +16,11 @@ import api_server
 client = TestClient(api_server.app)
 
 
-def test_normalize_model_mode_falls_back_to_general():
+def test_normalize_model_mode_falls_back_to_reasoning():
     assert api_server._normalize_model_mode("general") == "general"
     assert api_server._normalize_model_mode("reasoning") == "reasoning"
-    assert api_server._normalize_model_mode("invalid-mode") == "general"
-    assert api_server._normalize_model_mode("") == "general"
+    assert api_server._normalize_model_mode("invalid-mode") == "reasoning"
+    assert api_server._normalize_model_mode("") == "reasoning"
 
 
 def test_healthz_reports_service_flags(monkeypatch):
@@ -42,13 +42,13 @@ def test_healthz_reports_service_flags(monkeypatch):
 def test_get_config_returns_model_choices(monkeypatch):
     monkeypatch.setattr(api_server, "DEFAULT_GENERAL_MODEL", "gpt-4.1")
     monkeypatch.setattr(api_server, "DEFAULT_REASONING_MODEL", "gpt-5.4-mini")
-    monkeypatch.setattr(api_server, "DEFAULT_MODEL_MODE", "general")
+    monkeypatch.setattr(api_server, "DEFAULT_MODEL_MODE", "reasoning")
 
     response = client.get("/api/config")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["default_model_mode"] == "general"
+    assert payload["default_model_mode"] == "reasoning"
     assert payload["models"]["general"] == "gpt-4.1"
     assert payload["models"]["reasoning"] == "gpt-5.4-mini"
 

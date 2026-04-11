@@ -704,6 +704,117 @@ class TestAgenticQuery:
         assert requested_queries == [question]
         assert "Fallback answer" in result["answer"]
 
+    def test_rewrite_question_with_history_returns_standalone_question(self, monkeypatch):
+        monkeypatch.setattr(
+            ask_module,
+            "_create_chat_completion",
+            lambda client, messages, temperature=0.0, *, model=None: '{"question": "规则第2号的最低资本公式是什么？"}',
+        )
+
+        result = ask_module.rewrite_question_with_history(
+            client=object(),
+            question="那它的最低资本公式呢？",
+            history="Turn 1\nRole: user\nText: 规则第2号主要涉及什么内容？",
+            model="gpt-5.4-mini",
+        )
+
+        assert result == "规则第2号的最低资本公式是什么？"
+
+    def test_answer_from_hits_includes_interpreted_question(self, monkeypatch):
+        captured = {}
+
+        monkeypatch.setattr(ask_module, "prepare_answer_hits", lambda question, hits: hits)
+
+        def fake_chat_completion(client, messages, temperature=0.2, *, model=None):
+            captured["prompt"] = messages[1]["content"]
+            return "ok"
+
+        monkeypatch.setattr(ask_module, "_create_chat_completion", fake_chat_completion)
+
+        ask_module.answer_from_hits(
+            client=object(),
+            question="那它的最低资本公式呢？",
+            hits=[{"path": "Knowledge_Base_MarkDown/rules/rule-2.md", "text": "最低资本公式见第2号规则。"}],
+            language="zh",
+            history="Turn 1\nRole: user\nText: 规则第2号主要涉及什么内容？",
+            interpreted_question="规则第2号的最低资本公式是什么？",
+        )
+
+        assert "Interpreted latest question for retrieval continuity" in captured["prompt"]
+        assert "规则第2号的最低资本公式是什么？" in captured["prompt"]
+
+    def test_run_standard_query_uses_history_rewrite_for_retrieval(self, monkeypatch):
+        requested_queries = []
+
+        monkeypatch.setattr(
+            ask_module,
+            "rewrite_question_with_history",
+            lambda client, question, history, model=None: "规则第2号的最低资本公式是什么？",
+        )
+        monkeypatch.setattr(
+            ask_module,
+            "retrieve",
+            lambda client, current_question, k=4, similarity_threshold=0.0: requested_queries.append(current_question)
+            or [{"path": "Knowledge_Base_MarkDown/rules/rule-2.md", "text": "最低资本公式见第2号规则。"}],
+        )
+        monkeypatch.setattr(ask_module, "prepare_answer_hits", lambda question, hits: hits)
+        monkeypatch.setattr(
+            ask_module,
+            "_create_chat_completion",
+            lambda client, messages, temperature=0.2, *, model=None: "回答 [1]",
+        )
+
+        result = ask_module.run_standard_query(
+            client=object(),
+            question="那它的最低资本公式呢？",
+            language="zh",
+            history="Turn 1\nRole: user\nText: 规则第2号主要涉及什么内容？",
+            model="gpt-5.4-mini",
+        )
+
+        assert requested_queries == ["规则第2号的最低资本公式是什么？"]
+        assert result["executed_queries"] == ["规则第2号的最低资本公式是什么？"]
+
+    def test_run_agentic_query_uses_history_rewrite_for_planning(self, monkeypatch):
+        captured = {}
+
+        monkeypatch.setattr(
+            ask_module,
+            "rewrite_question_with_history",
+            lambda client, question, history, model=None: "规则第2号的最低资本公式是什么？",
+        )
+
+        class StubEngine:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def run(self, question, history=None):
+                captured["question"] = question
+                captured["history"] = history
+                return SimpleNamespace(
+                    answer="回答 [1]",
+                    hits=[{"path": "Knowledge_Base_MarkDown/rules/rule-2.md", "text": "最低资本公式见第2号规则。"}],
+                    sub_queries=[question],
+                    executed_queries=[question],
+                    retrieval_history=[],
+                    reflection_notes=[],
+                    iterations=1,
+                )
+
+        monkeypatch.setattr(ask_module, "AgenticRagEngine", StubEngine)
+        monkeypatch.setattr(ask_module, "prepare_answer_hits", lambda question, hits: hits)
+
+        result = ask_module.run_agentic_query(
+            client=object(),
+            question="那它的最低资本公式呢？",
+            language="zh",
+            history="Turn 1\nRole: user\nText: 规则第2号主要涉及什么内容？",
+            model="gpt-5.4-mini",
+        )
+
+        assert captured["question"] == "规则第2号的最低资本公式是什么？"
+        assert result["sub_queries"] == ["规则第2号的最低资本公式是什么？"]
+
     def test_agentic_query_applies_global_cap_before_synthesis(self):
         captured = {}
 
