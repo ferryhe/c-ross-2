@@ -398,7 +398,7 @@ a {
   gap: 12px;
   border-radius: 28px;
   border: 1px solid rgba(19, 37, 60, 0.12);
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.97);
   backdrop-filter: blur(18px);
   padding: 14px 16px 12px;
   box-shadow: 0 22px 48px rgba(19, 37, 60, 0.12);
@@ -425,6 +425,16 @@ a {
 .primary-button--compact {
   border-radius: 999px;
   padding: 9px 15px;
+}
+
+@media (prefers-contrast: more) {
+  .model-badge,
+  .utility-button,
+  .composer-card {
+    backdrop-filter: none;
+    background: #fff;
+    border-color: rgba(19, 37, 60, 0.24);
+  }
 }
 
 @media (max-width: 960px) {
