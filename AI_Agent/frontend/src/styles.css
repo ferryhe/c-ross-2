@@ -406,13 +406,13 @@ a {
 
 .composer-input {
   width: 100%;
-  min-height: 56px;
   resize: none;
   border: none;
   background: transparent;
   outline: none;
   color: #13253c;
   line-height: 1.7;
+  overflow-y: hidden;
 }
 
 .composer-actions {
