@@ -697,12 +697,20 @@ def _question_needs_history_context(question: str) -> bool:
         "previous",
         "earlier",
     )
-    standalone_indicators = ("规则第", "附件", "第", "capital", "risk", "governance", "solvency")
+    standalone_patterns = (
+        r"规则第\d+号",
+        r"附件\d+(?:-\d+)?",
+        r"第\d+号",
+        r"\bcapital\b",
+        r"\brisk\b",
+        r"\bgovernance\b",
+        r"\bsolvency\b",
+    )
 
     if normalized.startswith(context_dependent_prefixes):
         return True
     if any(term in normalized for term in context_dependent_terms) and not any(
-        indicator in normalized for indicator in standalone_indicators
+        re.search(pattern, normalized) for pattern in standalone_patterns
     ):
         return True
     return False
