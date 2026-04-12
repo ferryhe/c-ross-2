@@ -218,9 +218,13 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchConfig(controller.signal).catch((error: Error) => {
-      setConfigError(error.message);
-    });
+    fetchConfig(controller.signal)
+      .then(() => {
+        setConfigError(null);
+      })
+      .catch((error: Error) => {
+        setConfigError(error.message);
+      });
 
     return () => controller.abort();
   }, []);

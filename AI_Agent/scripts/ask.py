@@ -122,6 +122,7 @@ _INDEX_CACHE_PATHS = None
 _SECTION_CACHE_PATHS = None
 _MANIFEST_CACHE = None
 _ENCODER = None
+_SKILL_PROMPT_ITEMS = None
 
 DEFAULT_ANSWER_WORKFLOW = [
     "Classify the question as `catalog`, `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.",
@@ -163,7 +164,7 @@ def _load_skill_prompt_items(section_title: str, fallback: list[str]) -> list[st
         return fallback
 
     match = re.search(
-        rf"^# {re.escape(section_title)}\n+(.*?)(?=^# |\Z)",
+        rf"^# {re.escape(section_title)}\s*$\n+(.*?)(?=^# .+\s*$|\Z)",
         content,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -181,11 +182,14 @@ def _load_skill_prompt_items(section_title: str, fallback: list[str]) -> list[st
     return items or fallback
 
 
-ANSWER_WORKFLOW_ITEMS = _load_skill_prompt_items("Workflow", DEFAULT_ANSWER_WORKFLOW)
-MANDATORY_ANSWER_RULE_ITEMS = _load_skill_prompt_items(
-    "Mandatory Answer Rules",
-    DEFAULT_MANDATORY_ANSWER_RULES,
-)
+def _get_skill_prompt_items() -> tuple[list[str], list[str]]:
+    global _SKILL_PROMPT_ITEMS
+    if _SKILL_PROMPT_ITEMS is None:
+        _SKILL_PROMPT_ITEMS = (
+            _load_skill_prompt_items("Workflow", DEFAULT_ANSWER_WORKFLOW),
+            _load_skill_prompt_items("Mandatory Answer Rules", DEFAULT_MANDATORY_ANSWER_RULES),
+        )
+    return _SKILL_PROMPT_ITEMS
 
 
 def _section_index_path() -> Path:
@@ -347,6 +351,7 @@ def _legacy_get_system_prompt(language: str = "en") -> str:
 
 
 def get_system_prompt(language: str = "en") -> str:
+    answer_workflow_items, mandatory_answer_rule_items = _get_skill_prompt_items()
     base_prompt = (
         f"You are the documentation expert for the {KNOWLEDGE_BASE_NAME}. "
         "CRITICAL INSTRUCTIONS:\n"
@@ -362,10 +367,10 @@ def get_system_prompt(language: str = "en") -> str:
         "10. When the answer includes formulas, output valid LaTeX wrapped in `$...$` for inline math or `$$...$$` for block math. Preserve the source formula structure instead of rewriting it as plain text.\n"
     )
     base_prompt += "\nANSWER WORKFLOW:\n" + "\n".join(
-        f"{index}. {item}" for index, item in enumerate(ANSWER_WORKFLOW_ITEMS, start=1)
+        f"{index}. {item}" for index, item in enumerate(answer_workflow_items, start=1)
     )
     base_prompt += "\nMANDATORY ANSWER RULES:\n" + "\n".join(
-        f"{index}. {item}" for index, item in enumerate(MANDATORY_ANSWER_RULE_ITEMS, start=1)
+        f"{index}. {item}" for index, item in enumerate(mandatory_answer_rule_items, start=1)
     )
     base_prompt += "\n"
 
