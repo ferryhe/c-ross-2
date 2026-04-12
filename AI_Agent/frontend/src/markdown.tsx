@@ -25,7 +25,7 @@ export function MarkdownMessage({ markdown, sources = [] }: MarkdownMessageProps
           ),
           table: ({ node: _node, ...props }) => (
             <div
-              aria-label="表格内容，可横向滚动"
+              aria-label="Table content, horizontally scrollable / 表格内容，可横向滚动"
               className="markdown-table-wrap"
               role="region"
               tabIndex={0}
