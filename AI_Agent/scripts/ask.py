@@ -123,6 +123,7 @@ _SECTION_CACHE_PATHS = None
 _MANIFEST_CACHE = None
 _ENCODER = None
 _SKILL_PROMPT_ITEMS = None
+_SKILL_PROMPT_CONTENT = None
 
 DEFAULT_ANSWER_WORKFLOW = [
     "Classify the question as `catalog`, `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.",
@@ -157,10 +158,18 @@ def _normalize_path(path: str) -> str:
     return path.replace("\\", "/").lower()
 
 
-def _load_skill_prompt_items(section_title: str, fallback: list[str]) -> list[str]:
-    try:
-        content = ANSWER_SKILL_PATH.read_text(encoding="utf-8")
-    except OSError:
+def _get_skill_prompt_content() -> str | None:
+    global _SKILL_PROMPT_CONTENT
+    if _SKILL_PROMPT_CONTENT is None:
+        try:
+            _SKILL_PROMPT_CONTENT = ANSWER_SKILL_PATH.read_text(encoding="utf-8")
+        except OSError:
+            _SKILL_PROMPT_CONTENT = ""
+    return _SKILL_PROMPT_CONTENT or None
+
+
+def _load_skill_prompt_items(content: str | None, section_title: str, fallback: list[str]) -> list[str]:
+    if not content:
         return fallback
 
     match = re.search(
@@ -185,9 +194,10 @@ def _load_skill_prompt_items(section_title: str, fallback: list[str]) -> list[st
 def _get_skill_prompt_items() -> tuple[list[str], list[str]]:
     global _SKILL_PROMPT_ITEMS
     if _SKILL_PROMPT_ITEMS is None:
+        content = _get_skill_prompt_content()
         _SKILL_PROMPT_ITEMS = (
-            _load_skill_prompt_items("Workflow", DEFAULT_ANSWER_WORKFLOW),
-            _load_skill_prompt_items("Mandatory Answer Rules", DEFAULT_MANDATORY_ANSWER_RULES),
+            _load_skill_prompt_items(content, "Workflow", DEFAULT_ANSWER_WORKFLOW),
+            _load_skill_prompt_items(content, "Mandatory Answer Rules", DEFAULT_MANDATORY_ANSWER_RULES),
         )
     return _SKILL_PROMPT_ITEMS
 
@@ -376,12 +386,12 @@ def get_system_prompt(language: str = "en") -> str:
 
     if language == "zh":
         base_prompt += (
-            "11. LANGUAGE INSTRUCTION: Respond in Chinese (中文). "
+            "LANGUAGE INSTRUCTION: Respond in Chinese (中文). "
             "Maintain the same professional tone and citation format, but use Chinese for all explanations and summaries."
         )
     else:
         base_prompt += (
-            "11. LANGUAGE INSTRUCTION: Respond in English. "
+            "LANGUAGE INSTRUCTION: Respond in English. "
             "Maintain the same professional tone and citation format, and always use English for all explanations and summaries."
         )
 

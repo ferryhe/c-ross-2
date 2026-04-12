@@ -102,8 +102,6 @@ function EmptyState() {
 
   return (
     <section className="empty-state">
-      <p className="empty-state__eyebrow">中国偿二代问答系统</p>
-      <h2 className="empty-state__title">面向偿付能力监管规则的研究型问答</h2>
       <p className="empty-state__description">
         回答会优先基于知识库中的规则、附件和通知生成，并保留可点击的数字引用。
       </p>

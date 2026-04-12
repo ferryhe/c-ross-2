@@ -30,6 +30,8 @@ def test_system_prompt_includes_skill_workflow_and_rules():
     )
     assert "MANDATORY ANSWER RULES:" in prompt
     assert "Explain formulas with variable meaning and applicability; do not only restate LaTeX." in prompt
+    assert "LANGUAGE INSTRUCTION: Respond in English." in prompt
+    assert "11. LANGUAGE INSTRUCTION" not in prompt
 
 
 def test_fallback_encoders_round_trip_whitespace():

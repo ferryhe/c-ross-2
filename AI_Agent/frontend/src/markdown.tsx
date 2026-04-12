@@ -23,6 +23,11 @@ export function MarkdownMessage({ markdown, sources = [] }: MarkdownMessageProps
           a: ({ node: _node, ...props }) => (
             <a {...props} target="_blank" rel="noreferrer noopener" />
           ),
+          table: ({ node: _node, ...props }) => (
+            <div className="markdown-table-wrap">
+              <table {...props} />
+            </div>
+          ),
         }}
       >
         {preparedMarkdown}
