@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchConfig, sendChatRequest } from "./api";
 import { MarkdownMessage } from "./markdown";
-import type { ChatConfigResponse, SourceItem } from "./types";
+import type { SourceItem } from "./types";
 
 const STORAGE_KEY = "cross2-assistant-ui-thread";
 const EMPTY_STATE_SUGGESTIONS = [
@@ -86,7 +86,6 @@ function MessageBubble({ message }: { message: ThreadMessage }) {
   return (
     <article className={`message-row ${isUser ? "message-row--user" : "message-row--assistant"}`}>
       <div className={`message-bubble ${isUser ? "message-bubble--user" : "message-bubble--assistant"}`}>
-        <div className="message-bubble__meta">{isUser ? "你" : "助手"}</div>
         {isUser ? (
           <p className="message-bubble__plain">{text}</p>
         ) : text ? (
@@ -131,7 +130,6 @@ function EmptyState() {
 }
 
 function ChatShell(props: {
-  config: ChatConfigResponse | null;
   configError: string | null;
 }) {
   const runtime = useAssistantRuntime();
@@ -155,13 +153,7 @@ function ChatShell(props: {
       <PersistedThreadBridge />
 
       <header className="app-header">
-        <div>
-          <p className="app-header__eyebrow">中国偿二代研究助理</p>
-          <h1 className="app-header__title">{props.config?.knowledge_base_name ?? "中国偿二代问答系统"}</h1>
-        </div>
-        <div className="app-header__controls">
-          <span className="model-badge">{props.config?.models.reasoning ?? "gpt-5.4-mini"}</span>
-        </div>
+        <h1 className="app-header__title">偿付能力监管规定AI问答</h1>
       </header>
 
       {props.configError ? <div className="status-banner status-banner--error">{props.configError}</div> : null}
@@ -187,23 +179,33 @@ function ChatShell(props: {
             <button className="utility-button" onClick={resetThread} type="button">
               新对话
             </button>
-            <span className="composer-shell__hint">Shift + Enter 换行</span>
+            <span className="composer-shell__hint">Enter 换行</span>
           </div>
           <ComposerPrimitive.Root className="composer-card">
             <ComposerPrimitive.Input
               className="composer-input"
               minRows={1}
               maxRows={10}
-              placeholder="请输入与偿付能力监管规则相关的问题"
+              placeholder="请输入偿二代相关问题"
+              submitOnEnter={false}
             />
-            <div className="composer-actions">
-              {isRunning ? (
-                <button className="secondary-button secondary-button--compact" onClick={() => threadRuntime.cancelRun()} type="button">
-                  停止
-                </button>
-              ) : null}
-              <ComposerPrimitive.Send className="primary-button primary-button--compact">发送</ComposerPrimitive.Send>
-            </div>
+            {isRunning ? (
+              <button
+                aria-label="停止生成"
+                className="composer-action-button composer-action-button--stop"
+                onClick={() => threadRuntime.cancelRun()}
+                type="button"
+              >
+                <span aria-hidden="true" className="composer-action-button__stop-icon" />
+              </button>
+            ) : (
+              <ComposerPrimitive.Send aria-label="发送消息" className="composer-action-button">
+                <svg aria-hidden="true" className="composer-action-button__icon" viewBox="0 0 20 20">
+                  <path d="M4 10h10" />
+                  <path d="M10 4l6 6-6 6" />
+                </svg>
+              </ComposerPrimitive.Send>
+            )}
           </ComposerPrimitive.Root>
         </div>
       </footer>
@@ -212,18 +214,13 @@ function ChatShell(props: {
 }
 
 export default function App() {
-  const [config, setConfig] = useState<ChatConfigResponse | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchConfig(controller.signal)
-      .then((result) => {
-        setConfig(result);
-      })
-      .catch((error: Error) => {
-        setConfigError(error.message);
-      });
+    fetchConfig(controller.signal).catch((error: Error) => {
+      setConfigError(error.message);
+    });
 
     return () => controller.abort();
   }, []);
@@ -262,7 +259,7 @@ export default function App() {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatShell config={config} configError={configError} />
+      <ChatShell configError={configError} />
     </AssistantRuntimeProvider>
   );
 }
