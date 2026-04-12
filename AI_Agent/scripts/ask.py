@@ -165,7 +165,9 @@ def _get_skill_prompt_content() -> str | None:
             _SKILL_PROMPT_CONTENT = ANSWER_SKILL_PATH.read_text(encoding="utf-8")
         except OSError:
             _SKILL_PROMPT_CONTENT = ""
-    return _SKILL_PROMPT_CONTENT or None
+    if _SKILL_PROMPT_CONTENT == "":
+        return None
+    return _SKILL_PROMPT_CONTENT
 
 
 def _load_skill_prompt_items(content: str | None, section_title: str, fallback: list[str]) -> list[str]:
