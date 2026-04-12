@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import os
@@ -28,6 +29,7 @@ from utils import extract_json_payload, retry_with_exponential_backoff
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
+ANSWER_SKILL_PATH = REPO_ROOT / "skills" / "regulatory-markdown-answering" / "SKILL.md"
 
 load_project_env(PROJECT_ROOT)
 
@@ -121,6 +123,25 @@ _INDEX_CACHE_PATHS = None
 _SECTION_CACHE_PATHS = None
 _MANIFEST_CACHE = None
 _ENCODER = None
+DEFAULT_ANSWER_WORKFLOW = [
+    "Classify the question as `catalog`, `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.",
+    "For counts or directory questions, answer from `doc_catalog.jsonl` or `manifest.json` directly instead of retrieval.",
+    "If the question contains a rule number, attachment number, or exact notice title, resolve the target document from `doc_catalog.jsonl` and `title_aliases.jsonl` first, then keep the initial scope to that `doc_id`.",
+    "If the question asks for overview, scope, or major content, read `doc_summaries.jsonl` first and use `summary_structured`, `focus_points`, and headings to build the outline.",
+    "If the question asks for a requirement, article, threshold, table, formula, or variable, use `sections_structured.jsonl` as the primary evidence layer.",
+    "If the question asks for a formula, use `formula_cards.jsonl` to locate the formula and use the matching structured section to explain variable meaning, applicability, and nearby rule text.",
+    "Expand to notices, attachments, or related rules only when the question asks about implementation, transition, optimization, adjustments, or when the chosen section explicitly points to them.",
+    "Fall back to raw Markdown only when the `ready_data` artifacts are insufficient or obviously noisy.",
+]
+DEFAULT_MANDATORY_ANSWER_RULES = [
+    "Start with a direct conclusion.",
+    "Keep exact-number questions scoped to the matching document before exploring related material.",
+    "Treat `related_doc_ids` and relation edges as navigation hints; confirm the substantive claim in section text or raw Markdown before using it.",
+    "Explain formulas with variable meaning and applicability; do not only restate LaTeX.",
+    'Prefer section evidence over summary text when the question asks "由哪些部分组成", "按照哪项规则计量", "第几条怎么规定", or similar article-level questions.',
+    "If `summary_short` is noisy because of OCR notes, image placeholders, or publish-date boilerplate, use `summary_structured`, headings, and section text instead.",
+    "Separate regulatory text from your own inference, and say when evidence is incomplete.",
+]
 
 
 class _FallbackEncoder:
@@ -133,6 +154,46 @@ class _FallbackEncoder:
 
 def _normalize_path(path: str) -> str:
     return path.replace("\\", "/").lower()
+
+
+@functools.lru_cache(maxsize=1)
+def _get_skill_prompt_content() -> str | None:
+    try:
+        return ANSWER_SKILL_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _load_skill_prompt_items(content: str | None, section_title: str, fallback: list[str]) -> list[str]:
+    if not content:
+        return fallback
+
+    match = re.search(
+        rf"^# {re.escape(section_title)}\s*$\n+(.*?)(?=^# .+\s*$|\Z)",
+        content,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return fallback
+
+    items: list[str] = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^\d+\.\s+", stripped) or stripped.startswith("- "):
+            items.append(re.sub(r"^(?:\d+\.\s+|-\s+)", "", stripped))
+
+    return items or fallback
+
+
+@functools.lru_cache(maxsize=1)
+def _get_skill_prompt_items() -> tuple[list[str], list[str]]:
+    content = _get_skill_prompt_content()
+    return (
+        _load_skill_prompt_items(content, "Workflow", DEFAULT_ANSWER_WORKFLOW),
+        _load_skill_prompt_items(content, "Mandatory Answer Rules", DEFAULT_MANDATORY_ANSWER_RULES),
+    )
 
 
 def _section_index_path() -> Path:
@@ -294,6 +355,7 @@ def _legacy_get_system_prompt(language: str = "en") -> str:
 
 
 def get_system_prompt(language: str = "en") -> str:
+    answer_workflow_items, mandatory_answer_rule_items = _get_skill_prompt_items()
     base_prompt = (
         f"You are the documentation expert for the {KNOWLEDGE_BASE_NAME}. "
         "CRITICAL INSTRUCTIONS:\n"
@@ -308,15 +370,22 @@ def get_system_prompt(language: str = "en") -> str:
         "9. If you're uncertain about any detail, explicitly state the uncertainty.\n"
         "10. When the answer includes formulas, output valid LaTeX wrapped in `$...$` for inline math or `$$...$$` for block math. Preserve the source formula structure instead of rewriting it as plain text.\n"
     )
+    base_prompt += "\nANSWER WORKFLOW:\n" + "\n".join(
+        f"{index}. {item}" for index, item in enumerate(answer_workflow_items, start=1)
+    )
+    base_prompt += "\nMANDATORY ANSWER RULES:\n" + "\n".join(
+        f"{index}. {item}" for index, item in enumerate(mandatory_answer_rule_items, start=1)
+    )
+    base_prompt += "\n"
 
     if language == "zh":
         base_prompt += (
-            "7. LANGUAGE INSTRUCTION: Respond in Chinese (中文). "
+            "LANGUAGE INSTRUCTION: Respond in Chinese (中文). "
             "Maintain the same professional tone and citation format, but use Chinese for all explanations and summaries."
         )
     else:
         base_prompt += (
-            "7. LANGUAGE INSTRUCTION: Respond in English. "
+            "LANGUAGE INSTRUCTION: Respond in English. "
             "Maintain the same professional tone and citation format, and always use English for all explanations and summaries."
         )
 

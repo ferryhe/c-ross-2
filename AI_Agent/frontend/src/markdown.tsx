@@ -23,6 +23,16 @@ export function MarkdownMessage({ markdown, sources = [] }: MarkdownMessageProps
           a: ({ node: _node, ...props }) => (
             <a {...props} target="_blank" rel="noreferrer noopener" />
           ),
+          table: ({ node: _node, ...props }) => (
+            <div
+              aria-label="Table content, horizontally scrollable / 表格内容，可横向滚动"
+              className="markdown-table-wrap"
+              role="region"
+              tabIndex={0}
+            >
+              <table {...props} />
+            </div>
+          ),
         }}
       >
         {preparedMarkdown}
