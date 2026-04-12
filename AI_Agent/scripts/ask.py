@@ -123,7 +123,8 @@ _SECTION_CACHE_PATHS = None
 _MANIFEST_CACHE = None
 _ENCODER = None
 _SKILL_PROMPT_ITEMS = None
-_SKILL_PROMPT_CONTENT = None
+_SKILL_PROMPT_LOAD_FAILED = object()
+_SKILL_PROMPT_CONTENT: str | object | None = None
 
 DEFAULT_ANSWER_WORKFLOW = [
     "Classify the question as `catalog`, `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.",
@@ -164,8 +165,8 @@ def _get_skill_prompt_content() -> str | None:
         try:
             _SKILL_PROMPT_CONTENT = ANSWER_SKILL_PATH.read_text(encoding="utf-8")
         except OSError:
-            _SKILL_PROMPT_CONTENT = ""
-    if _SKILL_PROMPT_CONTENT == "":
+            _SKILL_PROMPT_CONTENT = _SKILL_PROMPT_LOAD_FAILED
+    if _SKILL_PROMPT_CONTENT is _SKILL_PROMPT_LOAD_FAILED:
         return None
     return _SKILL_PROMPT_CONTENT
 
