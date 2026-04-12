@@ -163,7 +163,7 @@ def _load_skill_prompt_items(section_title: str, fallback: list[str]) -> list[st
         return fallback
 
     match = re.search(
-        rf"^# {re.escape(section_title)}\n\n(.*?)(?=^# |\Z)",
+        rf"^# {re.escape(section_title)}\n+(.*?)(?=^# |\Z)",
         content,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -361,7 +361,7 @@ def get_system_prompt(language: str = "en") -> str:
         "9. If you're uncertain about any detail, explicitly state the uncertainty.\n"
         "10. When the answer includes formulas, output valid LaTeX wrapped in `$...$` for inline math or `$$...$$` for block math. Preserve the source formula structure instead of rewriting it as plain text.\n"
     )
-    base_prompt += "ANSWER WORKFLOW:\n" + "\n".join(
+    base_prompt += "\nANSWER WORKFLOW:\n" + "\n".join(
         f"{index}. {item}" for index, item in enumerate(ANSWER_WORKFLOW_ITEMS, start=1)
     )
     base_prompt += "\nMANDATORY ANSWER RULES:\n" + "\n".join(
