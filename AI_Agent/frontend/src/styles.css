@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: "SF Pro Display", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
   color: #13253c;
   background:
     radial-gradient(circle at top left, rgba(213, 230, 245, 0.9), transparent 34%),
@@ -137,7 +137,7 @@ a {
 }
 
 .chat-stage__viewport {
-  height: calc(100vh - 220px);
+  height: calc(100dvh - 220px);
   min-height: 480px;
   overflow-y: auto;
   padding: 24px 12px 18px;
@@ -185,8 +185,12 @@ a {
   background: #f8fbfd;
   color: #16314d;
   border-radius: 999px;
-  padding: 10px 14px;
+  padding: 14px 18px;
+  min-height: 44px;
+  font-size: 0.95rem;
   cursor: pointer;
+  width: 100%;
+  text-align: left;
 }
 
 .message-row {
@@ -354,7 +358,8 @@ a {
   position: sticky;
   bottom: 0;
   z-index: 10;
-  padding: 8px 0 18px;
+  padding: 8px 0 max(18px, env(safe-area-inset-bottom));
+  padding-top: max(8px, env(safe-area-inset-top));
   background: linear-gradient(180deg, rgba(238, 244, 247, 0) 0%, rgba(238, 244, 247, 0.84) 28%, rgba(238, 244, 247, 0.98) 100%);
 }
 
@@ -427,6 +432,14 @@ a {
   padding: 9px 15px;
 }
 
+.markdown-message table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-collapse: collapse;
+}
+
 @media (prefers-contrast: more) {
   .model-badge,
   .utility-button,
@@ -454,13 +467,13 @@ a {
   }
 
   .chat-stage__viewport {
-    height: calc(100vh - 270px);
+    height: calc(100dvh - 280px);
     min-height: 400px;
     padding: 18px 6px 12px;
   }
 
   .composer-shell {
-    padding-bottom: 12px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .composer-shell__utility {
@@ -469,5 +482,35 @@ a {
 
   .composer-shell__hint {
     font-size: 0.78rem;
+  }
+
+  .empty-state__suggestions {
+    flex-direction: column;
+  }
+
+  .suggestion-chip {
+    width: 100%;
+  }
+
+  .primary-button--compact,
+  .secondary-button--compact {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* iOS Safari sticky footer fix */
+@supports (-webkit-touch-callout: none) {
+  .composer-shell {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(238, 244, 247, 0.98);
+    z-index: 100;
+  }
+
+  .app-shell {
+    padding-bottom: 100px;
   }
 }
