@@ -139,6 +139,7 @@ function ChatShell(props: {
   const messages = useThread((state) => state.messages);
   const isRunning = useThread((state) => state.isRunning);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLElement | null>(null);
   const resetThread = () => {
     runtime.thread.reset();
     if (typeof window !== "undefined") {
@@ -149,6 +150,18 @@ function ChatShell(props: {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isRunning]);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    const updateHeight = () => {
+      document.documentElement.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div className="app-shell">
@@ -181,7 +194,7 @@ function ChatShell(props: {
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
 
-      <footer className="composer-shell">
+      <footer className="composer-shell" ref={composerRef}>
         <div className="composer-shell__inner">
           <div className="composer-shell__utility">
             <button className="utility-button" onClick={resetThread} type="button">
