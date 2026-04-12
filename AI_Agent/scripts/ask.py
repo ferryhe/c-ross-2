@@ -162,7 +162,11 @@ def _load_skill_prompt_items(section_title: str, fallback: list[str]) -> list[st
     except OSError:
         return fallback
 
-    match = re.search(rf"(?ms)^# {re.escape(section_title)}\n\n(.*?)(?=^# |\Z)", content)
+    match = re.search(
+        rf"^# {re.escape(section_title)}\n\n(.*?)(?=^# |\Z)",
+        content,
+        flags=re.MULTILINE | re.DOTALL,
+    )
     if not match:
         return fallback
 
