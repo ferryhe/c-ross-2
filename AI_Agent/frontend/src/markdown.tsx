@@ -24,7 +24,12 @@ export function MarkdownMessage({ markdown, sources = [] }: MarkdownMessageProps
             <a {...props} target="_blank" rel="noreferrer noopener" />
           ),
           table: ({ node: _node, ...props }) => (
-            <div className="markdown-table-wrap">
+            <div
+              aria-label="表格内容，可横向滚动"
+              className="markdown-table-wrap"
+              role="region"
+              tabIndex={0}
+            >
               <table {...props} />
             </div>
           ),

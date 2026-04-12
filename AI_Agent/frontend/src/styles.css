@@ -210,6 +210,11 @@ a {
   -webkit-overflow-scrolling: touch;
 }
 
+.markdown-table-wrap:focus-visible {
+  outline: 2px solid rgba(10, 95, 153, 0.55);
+  outline-offset: 4px;
+}
+
 .markdown-message table {
   width: max-content;
   min-width: 100%;

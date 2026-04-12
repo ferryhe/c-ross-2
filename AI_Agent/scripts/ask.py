@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import os
@@ -122,10 +123,6 @@ _INDEX_CACHE_PATHS = None
 _SECTION_CACHE_PATHS = None
 _MANIFEST_CACHE = None
 _ENCODER = None
-_SKILL_PROMPT_ITEMS = None
-_SKILL_PROMPT_LOAD_FAILED = object()
-_SKILL_PROMPT_CONTENT: str | object | None = None
-
 DEFAULT_ANSWER_WORKFLOW = [
     "Classify the question as `catalog`, `locate`, `summary`, `formula`, `comparison`, `version`, `compliance`, or `analysis`.",
     "For counts or directory questions, answer from `doc_catalog.jsonl` or `manifest.json` directly instead of retrieval.",
@@ -159,16 +156,12 @@ def _normalize_path(path: str) -> str:
     return path.replace("\\", "/").lower()
 
 
+@functools.lru_cache(maxsize=1)
 def _get_skill_prompt_content() -> str | None:
-    global _SKILL_PROMPT_CONTENT
-    if _SKILL_PROMPT_CONTENT is None:
-        try:
-            _SKILL_PROMPT_CONTENT = ANSWER_SKILL_PATH.read_text(encoding="utf-8")
-        except OSError:
-            _SKILL_PROMPT_CONTENT = _SKILL_PROMPT_LOAD_FAILED
-    if _SKILL_PROMPT_CONTENT is _SKILL_PROMPT_LOAD_FAILED:
+    try:
+        return ANSWER_SKILL_PATH.read_text(encoding="utf-8")
+    except OSError:
         return None
-    return _SKILL_PROMPT_CONTENT
 
 
 def _load_skill_prompt_items(content: str | None, section_title: str, fallback: list[str]) -> list[str]:
@@ -194,15 +187,13 @@ def _load_skill_prompt_items(content: str | None, section_title: str, fallback: 
     return items or fallback
 
 
+@functools.lru_cache(maxsize=1)
 def _get_skill_prompt_items() -> tuple[list[str], list[str]]:
-    global _SKILL_PROMPT_ITEMS
-    if _SKILL_PROMPT_ITEMS is None:
-        content = _get_skill_prompt_content()
-        _SKILL_PROMPT_ITEMS = (
-            _load_skill_prompt_items(content, "Workflow", DEFAULT_ANSWER_WORKFLOW),
-            _load_skill_prompt_items(content, "Mandatory Answer Rules", DEFAULT_MANDATORY_ANSWER_RULES),
-        )
-    return _SKILL_PROMPT_ITEMS
+    content = _get_skill_prompt_content()
+    return (
+        _load_skill_prompt_items(content, "Workflow", DEFAULT_ANSWER_WORKFLOW),
+        _load_skill_prompt_items(content, "Mandatory Answer Rules", DEFAULT_MANDATORY_ANSWER_RULES),
+    )
 
 
 def _section_index_path() -> Path:
