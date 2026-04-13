@@ -58,3 +58,24 @@ def test_explain_formula_uses_matching_section_evidence():
     assert explanation["doc_id"] == RULE2_DOC_ID
     assert "MC" in explanation["variables"]
     assert explanation["applicability_evidence"]
+
+
+def test_run_retrieval_eval_requires_catalog_plan_for_manifest_case(tmp_path):
+    cases_path = tmp_path / "cases.jsonl"
+    cases_path.write_text(
+        '{"case_id":"rule_count","question":"偿二代二期监管规则一共有多少号规定？","expected_doc":"Knowledge_Base_MarkDown/manifest.json"}\n',
+        encoding="utf-8",
+    )
+
+    failed = tools.run_retrieval_eval(
+        cases_path=cases_path,
+        planner=lambda question: {"question_type": "analysis", "title_hits": []},
+    )
+    passed = tools.run_retrieval_eval(
+        cases_path=cases_path,
+        planner=lambda question: {"question_type": "catalog", "title_hits": []},
+    )
+
+    assert failed["failed"] == 1
+    assert passed["passed"] == 1
+    assert passed["cases"][0]["candidate_doc_ids"] == ["manifest.json"]

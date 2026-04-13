@@ -18,7 +18,6 @@ from build_index import DEFAULT_SECTION_MAX_TOKENS
 from ready_data_tools import (
     READY_DATA_ROOT,
     add_feedback,
-    answer_verified as answer_verified_from_tools,
     explain_formula,
     inspect_ready_data,
     run_retrieval_eval,
@@ -117,10 +116,7 @@ def _cmd_evidence(args: argparse.Namespace) -> int:
 
 
 def _cmd_answer(args: argparse.Namespace) -> int:
-    if args.mode == "verified":
-        _json_print(answer_verified(args.question))
-    else:
-        _json_print(answer_verified_from_tools(args.question))
+    _json_print(answer_verified(args.question))
     return 0
 
 

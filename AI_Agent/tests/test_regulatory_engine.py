@@ -264,6 +264,19 @@ def test_plan_regulatory_query_uses_preferred_scope_for_title_focus(monkeypatch)
 
 def test_detect_question_type_recognizes_formula_query():
     assert engine_module.detect_question_type("规则第2号的计算公式是什么") == "formula"
+    assert engine_module.detect_question_type("规则第2号里有几个公式？") == "formula"
+
+
+def test_detect_question_type_recognizes_catalog_count_query():
+    assert engine_module.detect_question_type("偿二代二期监管规则一共有多少号规定？") == "catalog"
+
+
+def test_plan_regulatory_query_routes_catalog_direct():
+    plan = engine_module.plan_regulatory_query("偿二代二期监管规则一共有多少号规定？")
+
+    assert plan["retrieval_strategy"] == "catalog-direct"
+    assert plan["title_hits"] == []
+    assert plan["recommended_paths"] == ["Knowledge_Base_MarkDown/manifest.json"]
 
 
 def test_load_catalog_prefers_ready_data_artifact(tmp_path, monkeypatch):

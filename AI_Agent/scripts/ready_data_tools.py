@@ -14,6 +14,8 @@ REPO_ROOT = PROJECT_ROOT.parent
 KNOWLEDGE_ROOT = REPO_ROOT / "Knowledge_Base_MarkDown"
 READY_DATA_ROOT = KNOWLEDGE_ROOT / "ready_data"
 DEFAULT_FEEDBACK_PATH = PROJECT_ROOT / "eval" / "feedback.jsonl"
+CATALOG_MANIFEST_DOC_ID = "manifest.json"
+CATALOG_MANIFEST_PATH = "Knowledge_Base_MarkDown/manifest.json"
 
 REQUIRED_ARTIFACTS = (
     "doc_catalog.jsonl",
@@ -759,6 +761,12 @@ def trace_adjustments(notice: str, *, limit: int = 20, root: Path = READY_DATA_R
 
 
 def build_evidence_plan(question_type: str, scoped_doc_ids: list[str] | None) -> dict[str, Any]:
+    if question_type == "catalog":
+        return {
+            "scope_doc_ids": [],
+            "steps": ["catalog"],
+            "answer_rule": "目录统计类问题必须回到 manifest/目录元数据后再回答。",
+        }
     steps = ["titles"]
     if question_type in {"summary", "comparison", "version", "analysis", "locate"}:
         steps.append("summaries")
@@ -775,6 +783,33 @@ def build_evidence_plan(question_type: str, scoped_doc_ids: list[str] | None) ->
     }
 
 
+def _catalog_manifest_evidence(root: Path = READY_DATA_ROOT) -> dict[str, Any]:
+    manifest_path = root.parent / "manifest.json"
+    text = "目录统计类问题使用 manifest.json 元数据回答。"
+    if manifest_path.exists():
+        raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+        if isinstance(raw, list):
+            entries = raw
+        elif isinstance(raw, dict):
+            entries = raw.get("entries", [])
+        else:
+            entries = []
+        if isinstance(entries, list):
+            rules_count = sum(
+                1 for item in entries if isinstance(item, dict) and item.get("category") == "rules"
+            )
+            text = f"manifest 共收录 {rules_count} 份 rules 类文件，可用于回答监管规则数量问题。"
+
+    return {
+        "doc_id": CATALOG_MANIFEST_DOC_ID,
+        "path": CATALOG_MANIFEST_PATH,
+        "title": "知识库目录清单",
+        "source_kind": "catalog",
+        "text": text,
+        "score": 1.0,
+    }
+
+
 def collect_evidence(
     question: str,
     *,
@@ -784,6 +819,28 @@ def collect_evidence(
 ) -> dict[str, Any]:
     question_type = str((plan or {}).get("question_type", "analysis"))
     scoped_doc_ids = [normalize_doc_id(str(item)) for item in (plan or {}).get("scoped_doc_ids", [])]
+    if question_type == "catalog":
+        catalog_hit = _catalog_manifest_evidence(root)
+        return {
+            "question": question,
+            "plan": plan or {},
+            "evidence": {
+                "catalog": [catalog_hit],
+                "summaries": [],
+                "sections": [],
+                "formulas": [],
+                "relations": [],
+            },
+            "citations": [
+                {
+                    "source_kind": "catalog",
+                    "id": catalog_hit["doc_id"],
+                    "path": catalog_hit["path"],
+                    "title": catalog_hit["title"],
+                }
+            ],
+        }
+
     if not scoped_doc_ids:
         scoped_doc_ids = [
             normalize_doc_id(str(hit.get("doc_id", "")))
@@ -924,6 +981,11 @@ def answer_verified(question: str, *, plan: dict[str, Any] | None = None, root: 
             "evidence": evidence,
             "citations": [],
         }
+
+    if groups.get("catalog"):
+        catalog_hit = groups["catalog"][0]
+        answer = f"根据目录元数据，{catalog_hit.get('text')} [1]"
+        return {"mode": "verified", "answer": answer, "evidence": evidence, "citations": citations[:1]}
 
     if groups["formulas"]:
         explanation = explain_formula(formula_id=str(groups["formulas"][0].get("formula_id", "")), root=root)
@@ -1116,7 +1178,7 @@ def run_retrieval_eval(
                         if item.get(key):
                             candidate_doc_ids.append(normalize_doc_id(str(item.get(key))))
         unique_doc_ids = [item for item in dict.fromkeys(candidate_doc_ids) if item]
-        ok = expected_doc in unique_doc_ids or expected_doc == normalize_doc_id("Knowledge_Base_MarkDown/manifest.json")
+        ok = expected_doc in unique_doc_ids
         if ok:
             passed += 1
         results.append(
@@ -1126,6 +1188,7 @@ def run_retrieval_eval(
                 "question": question,
                 "expected_doc": expected_doc,
                 "ok": ok,
+                "question_type": plan.get("question_type") if isinstance(plan, dict) else None,
                 "candidate_doc_ids": unique_doc_ids[:10],
             }
         )
