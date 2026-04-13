@@ -8,6 +8,7 @@
 - [数据层 Schema 设计](./project/数据层Schema设计.md)
 - [数据层下一阶段实施计划](./project/数据层下一阶段实施计划.md)
 - [专业回答引擎改造计划](./project/专业回答引擎改造计划.md)
+- [AI Agent 工具化开发路径](./project/AI-Agent工具化开发路径.md)
 
 ## AI_Agent 验证与演进
 

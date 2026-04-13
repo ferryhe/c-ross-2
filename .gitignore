@@ -4,6 +4,8 @@ AI_Agent/frontend/node_modules/
 AI_Agent/frontend/.vite/
 AI_Agent/frontend/coverage/
 work/
+output/
+tmp/
 __pycache__/
 .pytest_cache/
 .venv/
@@ -25,3 +27,9 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
+article/
+
+# Local document helpers for the writing workflow
+scripts/docx_math.py
+scripts/upgrade_chapter2_formulas.py
+.devcontainer/
