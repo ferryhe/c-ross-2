@@ -7,6 +7,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+try:
+    from . import ready_data_tools
+except ImportError:
+    import ready_data_tools
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = PROJECT_ROOT.parent
@@ -24,6 +29,7 @@ SUMMARY_MARKERS = ("主要内容", "概览", "概要", "总结", "介绍", "概�
 FORMULA_MARKERS = ("公式", "计算", "系数", "因子", "阈值", "上限", "下限", "取值", "曲线", "表格")
 VERSION_MARKERS = ("调整", "修订", "延长", "实施", "过渡期", "优化", "通知")
 COMPLIANCE_MARKERS = ("应当", "是否需要", "要不要", "报送", "披露", "提交", "编报", "要求")
+GENERIC_ALIASES = {"通知", "监管规则", "附件"}
 _ASK_MODULE: Any | None = None
 
 
@@ -331,6 +337,8 @@ def _score_title_query(query: str, entry: CatalogEntry) -> tuple[float, str] | N
             best_reason = f"标题主题命中：{focus_term}"
 
     for alias in entry.aliases:
+        if alias in GENERIC_ALIASES:
+            continue
         alias_norm = _normalize_text(alias)
         if not alias_norm:
             continue
@@ -404,6 +412,10 @@ def _score_summary_query(query: str, entry: CatalogEntry) -> tuple[float, str] |
 
 
 def search_summaries(query: str, *, limit: int = 5, doc_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    ready_data_hits = ready_data_tools.search_summaries(query, limit=limit, doc_ids=doc_ids)
+    if ready_data_hits:
+        return ready_data_hits
+
     target_ids = {item.replace("\\", "/") for item in doc_ids or []}
     scored: list[dict[str, Any]] = []
 
@@ -418,6 +430,43 @@ def search_summaries(query: str, *, limit: int = 5, doc_ids: list[str] | None = 
 
     scored.sort(key=lambda item: (float(item["score"]), item["title"]), reverse=True)
     return scored[:limit]
+
+
+def search_sections(query: str, *, limit: int = 5, doc_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    return ready_data_tools.search_sections(query, limit=limit, doc_ids=doc_ids)
+
+
+def search_formulas(query: str, *, limit: int = 5, doc_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    return ready_data_tools.search_formulas(query, limit=limit, doc_ids=doc_ids)
+
+
+def explain_formula(*, query: str | None = None, formula_id: str | None = None) -> dict[str, Any]:
+    return ready_data_tools.explain_formula(query=query, formula_id=formula_id)
+
+
+def trace_relations(
+    *,
+    doc_id: str | None = None,
+    query: str | None = None,
+    direction: str = "both",
+    relation: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    return ready_data_tools.trace_relations(
+        doc_id=doc_id,
+        query=query,
+        direction=direction,
+        relation=relation,
+        limit=limit,
+    )
+
+
+def trace_notices(rule: str, *, limit: int = 20) -> dict[str, Any]:
+    return ready_data_tools.trace_notices(rule, limit=limit)
+
+
+def trace_adjustments(notice: str, *, limit: int = 20) -> dict[str, Any]:
+    return ready_data_tools.trace_adjustments(notice, limit=limit)
 
 
 def detect_question_type(question: str) -> str:
@@ -558,6 +607,7 @@ def plan_regulatory_query(question: str) -> dict[str, Any]:
         "question": question,
         "question_type": question_type,
         "retrieval_strategy": retrieval_strategy,
+        "evidence_plan": ready_data_tools.build_evidence_plan(question_type, scoped_doc_ids),
         "title_hits": title_hits,
         "summary_hits": summary_hits,
         "exact_scope_doc_ids": exact_scope_doc_ids,
@@ -607,6 +657,16 @@ def _catalog_snippets_from_title_hits(question_type: str, title_hits: list[dict[
     return snippets
 
 
+def collect_evidence(question: str, *, limit: int = 5) -> dict[str, Any]:
+    plan = plan_regulatory_query(question)
+    return ready_data_tools.collect_evidence(question, plan=plan, limit=limit)
+
+
+def answer_verified(question: str) -> dict[str, Any]:
+    plan = plan_regulatory_query(question)
+    return ready_data_tools.answer_verified(question, plan=plan)
+
+
 def run_regulatory_query(
     client: Any,
     question: str,
@@ -630,6 +690,8 @@ def run_regulatory_query(
 
     plan = plan_regulatory_query(question)
     aggregated_hits: list[dict[str, Any]] = []
+    structured_evidence = ready_data_tools.collect_evidence(question, plan=plan, limit=max(4, k))
+    aggregated_hits.extend(ready_data_tools.evidence_to_answer_hits(structured_evidence, limit=max(6, k * 2)))
 
     for scoped_query in plan["scoped_queries"]:
         aggregated_hits.extend(
@@ -664,6 +726,7 @@ def run_regulatory_query(
         "iterations": len(plan["scoped_queries"]),
         "reflection_notes": ["Regulatory engine combined title, summary, and evidence retrieval."],
         "retrieval_history": [],
+        "structured_evidence": structured_evidence,
         "plan": plan,
     }
 
@@ -675,7 +738,13 @@ def build_engine_config() -> dict[str, Any]:
         "capabilities": [
             "title-search",
             "summary-search",
+            "section-search",
+            "formula-search",
+            "formula-explanation",
+            "relation-trace",
             "question-planning",
+            "evidence-collection",
+            "verified-answering",
             "scoped-retrieval",
             "citation-grounded-answering",
         ],

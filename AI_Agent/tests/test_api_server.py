@@ -97,6 +97,51 @@ def test_engine_title_search_endpoint_returns_catalog_hits(monkeypatch):
     assert payload["hits"][0]["aliases"] == ["规则第2号", "第2号规则"]
 
 
+def test_engine_section_search_endpoint_returns_ready_data_hits(monkeypatch):
+    monkeypatch.setattr(
+        api_server,
+        "search_sections",
+        lambda query, limit=5, doc_ids=None: [
+            {
+                "section_id": "rules/rule-2.md#section-1",
+                "doc_id": "rules/rule-2.md",
+                "title": "规则第2号",
+                "text": "最低资本由三部分组成。",
+                "score": 120.0,
+            }
+        ],
+    )
+
+    response = client.post(
+        "/api/engine/search/sections",
+        json={"query": "最低资本由哪些部分组成", "docId": "rules/rule-2.md"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["hits"][0]["section_id"] == "rules/rule-2.md#section-1"
+
+
+def test_engine_formula_explain_endpoint_returns_formula_details(monkeypatch):
+    monkeypatch.setattr(
+        api_server,
+        "explain_formula",
+        lambda query=None, formula_id=None: {
+            "ok": True,
+            "formula_id": formula_id,
+            "variables": ["MC", "LA"],
+        },
+    )
+
+    response = client.post(
+        "/api/engine/explain/formula",
+        json={"formulaId": "rules/rule-2.md#formula-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["variables"] == ["MC", "LA"]
+
+
 def test_engine_plan_endpoint_returns_scoped_queries(monkeypatch):
     monkeypatch.setattr(
         api_server,
@@ -139,6 +184,52 @@ def test_engine_plan_endpoint_returns_scoped_queries(monkeypatch):
     assert payload["question_type"] == "summary"
     assert payload["scoped_queries"][0] == "规则第2号主要内容是什么"
     assert payload["title_hits"][0]["path"] == "Knowledge_Base_MarkDown/rules/rule-2.md"
+
+
+def test_engine_evidence_endpoint_returns_collected_evidence(monkeypatch):
+    monkeypatch.setattr(
+        api_server,
+        "collect_evidence",
+        lambda question: {"question": question, "evidence": {"sections": [{"section_id": "s1"}]}},
+    )
+
+    response = client.post(
+        "/api/engine/evidence",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "最低资本由哪些部分组成？"}],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["evidence"]["sections"][0]["section_id"] == "s1"
+
+
+def test_engine_answer_endpoint_returns_verified_answer(monkeypatch):
+    monkeypatch.setattr(
+        api_server,
+        "answer_verified",
+        lambda question: {"mode": "verified", "answer": f"verified:{question}", "citations": []},
+    )
+
+    response = client.post(
+        "/api/engine/answer",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "最低资本由哪些部分组成？"}],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"].startswith("verified:")
 
 
 def test_chat_endpoint_returns_answer_and_sources(monkeypatch):

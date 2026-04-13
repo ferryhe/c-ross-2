@@ -1,0 +1,8 @@
+{"case_id":"rule_count","question":"偿二代二期监管规则一共有多少号规定？","expected_doc":"Knowledge_Base_MarkDown/manifest.json","category":"规则数量类"}
+{"case_id":"rule2_overview","question":"保险公司偿付能力监管规则第2号主要涉及什么内容？","expected_doc":"rules/保险公司偿付能力监管规则第2号：最低资本.md","category":"单规则概览类"}
+{"case_id":"minimum_capital_components","question":"最低资本由哪些部分组成？","expected_doc":"rules/保险公司偿付能力监管规则第2号：最低资本.md","category":"条文结论类"}
+{"case_id":"rule2_formula","question":"规则第2号里最低资本的计算公式是什么？请解释变量含义。","expected_doc":"rules/保险公司偿付能力监管规则第2号：最低资本.md","category":"公式解释类"}
+{"case_id":"threshold_interest_curve","question":"终极利率暂定为多少？","expected_doc":"attachments/附件1：寿险合同负债评估的折现率曲线.md","category":"阈值类"}
+{"case_id":"attachment4_summary","question":"附件4是什么，主要包含什么内容？","expected_doc":"attachments/附件4：保险公司压力测试必测压力情景和必测因素.md","category":"附件定位类"}
+{"case_id":"notice_adjustment","question":"优化保险公司偿付能力监管标准的通知调整了哪些规则？","expected_doc":"notices/【2023-9 金规5号】国家金融监督管理总局关于优化保险公司偿付能力监管标准的通知.md","category":"通知调整类"}
+{"case_id":"control_risk_relation","question":"控制风险最低资本按照哪一项规则计量？","expected_doc":"rules/保险公司偿付能力监管规则第12号：偿付能力风险管理要求与评估.md","category":"跨规则关系类"}

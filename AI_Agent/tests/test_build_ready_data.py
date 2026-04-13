@@ -97,6 +97,8 @@ def test_build_ready_data_generates_rule_aliases_and_formula_cards(tmp_path):
     assert formulas
     assert formulas[0]["doc_id"] == "rules/保险公司偿付能力监管规则第2号：最低资本.md"
     assert "MC" in "".join(formulas[0]["variables"])
+    assert "times" not in formulas[0]["variables"]
+    assert "mathrm" not in formulas[0]["variables"]
 
 
 def test_build_ready_data_generates_relation_edges(tmp_path):
@@ -120,7 +122,10 @@ def test_build_ready_data_generates_relation_edges(tmp_path):
     ready_data_module.build_ready_data(source=source, output_root=output_root, section_max_tokens=200)
 
     graph = json.loads((output_root / "relations_graph.json").read_text(encoding="utf-8"))
-    assert any(edge["relation"] == "mentions_attachment" for edge in graph["edges"])
+    attachment_edges = [edge for edge in graph["edges"] if edge["relation"] == "mentions_attachment"]
+    assert attachment_edges
+    assert attachment_edges[0]["evidence_section_id"].endswith("#section-1")
+    assert attachment_edges[0]["confidence"] > 0
 
 
 def test_build_ready_data_preserves_empty_front_matter_values_and_related_docs(tmp_path):

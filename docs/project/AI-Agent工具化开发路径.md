@@ -16,6 +16,19 @@
 - 带证据和引用的可验证回答
 - 可被 AI Agent 编排调用的 CLI 和 skill
 
+## 当前实现状态
+
+已实现统一 CLI 与 professional engine 工具层：
+
+- `build-ready-data`、`inspect-ready-data`、`validate-ready-data`
+- `search titles/summaries/sections/formulas`
+- `explain formula`
+- `trace relations/notices/adjustments`
+- `plan`、`evidence`、`answer --mode verified`
+- `eval retrieval`、`feedback add`
+
+当前 ready-data 构建会生成 manifest 统计、清洗公式变量中的 LaTeX 控制词，并为关系边补充 `evidence_section_id`、`evidence_text_preview`、`effective_date` 与 `confidence`。离线检索评测集已固化为 `AI_Agent/eval/cases.jsonl`。
+
 ## Agent 处理契约
 
 需要通过 skill 明确告诉 AI Agent：

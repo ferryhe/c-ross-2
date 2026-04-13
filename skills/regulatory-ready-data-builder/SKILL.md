@@ -18,6 +18,16 @@ Turn raw regulation Markdown into stable `ready_data` artifacts so downstream ch
 7. Generate `relations_graph.json` and propagate lightweight `related_doc_ids` into summaries.
 8. Write `ready_data_manifest.json`, then inspect counts and a few sample rows before considering the build complete.
 
+# Preferred Commands
+
+Use the unified CLI from the repo root:
+
+```powershell
+python .\cross2.py build-ready-data --source Knowledge_Base_MarkDown --output Knowledge_Base_MarkDown\ready_data
+python .\cross2.py inspect-ready-data --root Knowledge_Base_MarkDown\ready_data
+python .\cross2.py validate-ready-data --root Knowledge_Base_MarkDown\ready_data
+```
+
 # Rules
 
 - Prefer deterministic extraction over online summarization during build steps.
@@ -27,6 +37,8 @@ Turn raw regulation Markdown into stable `ready_data` artifacts so downstream ch
 - Treat the ready-data outputs as the contract for downstream chatbot and agent consumers.
 - Prefer informative intro paragraphs over OCR boilerplate, image placeholders, or date-only lines when setting `summary_short`.
 - Treat `relations_graph.json` and `related_doc_ids` as navigation hints; do not overstate them as authoritative legal semantics.
+- Relation edges may include semantic hints such as `adjusts_rule`, `extends_transition`, `applies_to_rule`, and `requires_attachment`; still confirm the substantive claim in section text or raw Markdown.
+- Formula variables must filter LaTeX control words such as `begin`, `leq`, `times`, `operatorname`, and `mathrm`.
 - Avoid self-links and obviously noisy relation edges.
 - Validate the builder with tests and spot-check a few artifacts after regeneration.
 

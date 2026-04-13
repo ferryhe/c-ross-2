@@ -92,7 +92,8 @@ npm run build
 1. 重建 `ready_data`
 
 ```powershell
-python .\scripts\build_ready_data.py --source ..\Knowledge_Base_MarkDown --output-root ..\Knowledge_Base_MarkDown\ready_data
+python ..\cross2.py build-ready-data --source ..\Knowledge_Base_MarkDown --output ..\Knowledge_Base_MarkDown\ready_data
+python ..\cross2.py validate-ready-data --root ..\Knowledge_Base_MarkDown\ready_data
 ```
 
 2. 重建向量索引
@@ -134,6 +135,12 @@ Python：
 
 ```powershell
 python -m pytest tests
+```
+
+离线检索评测：
+
+```powershell
+python ..\cross2.py eval retrieval --cases eval\cases.jsonl
 ```
 
 前端：

@@ -18,6 +18,20 @@ Produce verifiable answers from this repo's `ready_data` artifacts with the smal
 7. Expand to notices, attachments, or related rules only when the question asks about implementation, transition, optimization, adjustments, or when the chosen section explicitly points to them.
 8. Fall back to raw Markdown only when the `ready_data` artifacts are insufficient or obviously noisy.
 
+# Preferred Commands
+
+Use the unified CLI from the repo root when answering as an agent:
+
+```powershell
+python .\cross2.py plan --question "规则第2号主要内容是什么"
+python .\cross2.py evidence --question "控制风险最低资本按照哪一项规则计量？"
+python .\cross2.py search sections --query "最低资本由哪些部分组成？" --doc-id "rules/保险公司偿付能力监管规则第2号：最低资本.md"
+python .\cross2.py search formulas --query "规则第2号最低资本公式" --doc-id "rules/保险公司偿付能力监管规则第2号：最低资本.md"
+python .\cross2.py explain formula --formula-id "rules/保险公司偿付能力监管规则第2号：最低资本.md#formula-1"
+python .\cross2.py trace relations --doc-id "rules/保险公司偿付能力监管规则第2号：最低资本.md"
+python .\cross2.py answer --question "最低资本由哪些部分组成？" --mode verified
+```
+
 # Artifact Roles
 
 - `doc_catalog.jsonl`: document identity, numbering, aliases, headings, and direct catalog answers
@@ -33,6 +47,7 @@ Produce verifiable answers from this repo's `ready_data` artifacts with the smal
 - Keep exact-number questions scoped to the matching document before exploring related material.
 - Treat `related_doc_ids` and relation edges as navigation hints; confirm the substantive claim in section text or raw Markdown before using it.
 - Explain formulas with variable meaning and applicability; do not only restate LaTeX.
+- Filter LaTeX control words from variable explanations; keep real variables such as `MC`, `LA`, `Stress_t`, and `Spread_t`.
 - Prefer section evidence over summary text when the question asks "由哪些部分组成", "按照哪项规则计量", "第几条怎么规定", or similar article-level questions.
 - If `summary_short` is noisy because of OCR notes, image placeholders, or publish-date boilerplate, use `summary_structured`, headings, and section text instead.
 - Separate regulatory text from your own inference, and say when evidence is incomplete.

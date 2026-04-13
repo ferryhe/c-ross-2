@@ -63,6 +63,60 @@
 - `适用范围`
 - `对比前先找相关文档`
 
+### `POST /api/engine/search/sections`
+
+根据 `sections_structured.jsonl` 做 section/article/table/threshold/formula-adjacent 证据检索。
+
+请求：
+
+```json
+{
+  "query": "最低资本由哪些部分组成？",
+  "docId": "rules/保险公司偿付能力监管规则第2号：最低资本.md",
+  "limit": 5
+}
+```
+
+### `POST /api/engine/search/formulas`
+
+根据 `formula_cards.jsonl` 定位公式卡，并返回过滤 LaTeX 控制词后的变量列表。
+
+请求：
+
+```json
+{
+  "query": "规则第2号最低资本公式",
+  "docId": "rules/保险公司偿付能力监管规则第2号：最低资本.md",
+  "limit": 5
+}
+```
+
+### `POST /api/engine/explain/formula`
+
+用公式卡定位公式，再回到匹配 section 解释变量和适用上下文。
+
+请求：
+
+```json
+{
+  "formulaId": "rules/保险公司偿付能力监管规则第2号：最低资本.md#formula-1"
+}
+```
+
+### `POST /api/engine/trace/relations`
+
+根据 `relations_graph.json` 追溯规则、通知、附件之间的导航关系。关系边只是导航提示，回答前仍应回到 section 或 Markdown 原文确认。
+
+请求：
+
+```json
+{
+  "docId": "rules/保险公司偿付能力监管规则第2号：最低资本.md",
+  "direction": "both",
+  "limit": 20
+}
+```
+
 ### `POST /api/engine/plan`
 
 只做问题规划，不直接回答。
@@ -71,6 +125,7 @@
 
 - `question_type`
 - `retrieval_strategy`
+- `evidence_plan`
 - `scoped_queries`
 - `recommended_paths`
 - `title_hits`
@@ -82,6 +137,14 @@
 - 前端展示“准备如何检索”
 - 调试法规问答工作流
 
+### `POST /api/engine/evidence`
+
+只收集证据，不生成最终自然语言答案。返回 `summary / section / formula / relation` 四类证据集合。
+
+### `POST /api/engine/answer`
+
+基于 ready-data 做确定性 verified answer。它不调用在线模型，适合在 agent 自己组织最终回答前做证据闭环检查。
+
 ### `POST /api/engine/chat`
 
 专业引擎完整回答入口。
@@ -91,14 +154,16 @@
 1. 问题分类
 2. 标题检索
 3. 摘要检索
-4. scoped retrieval
-5. citation-grounded synthesis
+4. section / formula / relation 证据收集
+5. scoped retrieval
+6. citation-grounded synthesis
 
 返回内容除了标准回答字段，还包含：
 
 - `engine_mode`
 - `question_type`
 - `retrieval_strategy`
+- `evidence_plan`
 - `scoped_queries`
 - `recommended_paths`
 - `title_hits`
@@ -114,19 +179,22 @@
 - 新接口为专业法规引擎和 skill/agent 场景服务
 - 两者共用底层知识库和引用式回答能力
 
-## 当前限制
+## 当前能力
 
-当前专业引擎还是第一版骨架，已经具备：
+当前专业引擎已经具备：
 
 - title-first 检索
-- summary-first 粗召回
+- 直接消费 `doc_summaries.jsonl` 的 summary-first 粗召回
+- section / formula 检索
+- 公式解释和变量噪声过滤
+- relation trace 导航
 - 问题类型规划
+- evidence 收集
+- 离线 retrieval eval
 - 与现有 RAG 的集成
 
-但还没有完整实现：
+仍需注意：
 
-- article / formula / table / threshold 的独立索引层
-- 规则、通知、附件之间的关系图
-- 变量卡片和公式卡片
-
-这些会在后续阶段继续补齐。
+- relation 边不能直接替代原文证据。
+- `/api/engine/chat` 的最终自然语言合成仍依赖已配置的在线模型和向量索引。
+- `/api/engine/answer` 是确定性 verified answer，适合做证据闭环，不替代人工法规判断。

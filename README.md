@@ -58,10 +58,25 @@
 当 `Knowledge_Base_MarkDown/` 内容变化，希望重建 agent/chatbot 可消费的数据层时：
 
 ```powershell
-python AI_Agent\scripts\build_ready_data.py --source Knowledge_Base_MarkDown --output-root Knowledge_Base_MarkDown\ready_data
+python .\cross2.py build-ready-data --source Knowledge_Base_MarkDown --output Knowledge_Base_MarkDown\ready_data
+python .\cross2.py validate-ready-data --root Knowledge_Base_MarkDown\ready_data
 ```
 
-### 2. 更新向量索引
+### 2. Agent 工具化检索
+
+`cross2` 是面向 ready-data、skill 和 professional engine 的统一 CLI：
+
+```powershell
+python .\cross2.py search titles --query "规则第2号"
+python .\cross2.py search sections --query "最低资本由哪些部分组成？" --doc-id "rules/保险公司偿付能力监管规则第2号：最低资本.md"
+python .\cross2.py search formulas --query "规则第2号最低资本公式" --doc-id "rules/保险公司偿付能力监管规则第2号：最低资本.md"
+python .\cross2.py explain formula --formula-id "rules/保险公司偿付能力监管规则第2号：最低资本.md#formula-1"
+python .\cross2.py evidence --question "控制风险最低资本按照哪一项规则计量？"
+python .\cross2.py answer --question "最低资本由哪些部分组成？" --mode verified
+python .\cross2.py eval retrieval --cases AI_Agent\eval\cases.jsonl
+```
+
+### 3. 更新向量索引
 
 当需要让参考 consumer 使用最新 Markdown 语料时：
 
@@ -69,7 +84,7 @@ python AI_Agent\scripts\build_ready_data.py --source Knowledge_Base_MarkDown --o
 python AI_Agent\scripts\build_index.py --source Knowledge_Base_MarkDown
 ```
 
-### 3. 启动验证 chatbot / professional engine
+### 4. 启动验证 chatbot / professional engine
 
 详细说明见 [AI_Agent/README.md](./AI_Agent/README.md)。
 
