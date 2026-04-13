@@ -33,11 +33,17 @@ from scripts.ask import (
     run_query,
 )
 from scripts.regulatory_engine import (
+    answer_verified,
     build_engine_config,
+    collect_evidence,
+    explain_formula,
     plan_regulatory_query,
     run_regulatory_query,
+    search_formulas,
+    search_sections,
     search_summaries,
     search_titles,
+    trace_relations,
 )
 
 VALID_MODEL_MODES = {"general", "reasoning"}
@@ -99,6 +105,32 @@ class SearchRequest(BaseModel):
     limit: int = 5
 
 
+class ScopedSearchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str
+    limit: int = 5
+    doc_id: str | None = Field(default=None, alias="docId")
+    doc_ids: list[str] = Field(default_factory=list, alias="docIds")
+
+
+class FormulaExplainRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str | None = None
+    formula_id: str | None = Field(default=None, alias="formulaId")
+
+
+class RelationTraceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str | None = None
+    doc_id: str | None = Field(default=None, alias="docId")
+    direction: Literal["both", "in", "out"] = "both"
+    relation: str | None = None
+    limit: int = 20
+
+
 class CatalogHitResponse(BaseModel):
     doc_id: str
     path: str
@@ -119,6 +151,7 @@ class EnginePlanResponse(BaseModel):
     question: str
     question_type: str
     retrieval_strategy: str
+    evidence_plan: dict[str, Any] = Field(default_factory=dict)
     scoped_queries: list[str]
     recommended_paths: list[str]
     title_hits: list[CatalogHitResponse]
@@ -129,6 +162,7 @@ class EngineChatResponse(ChatResponse):
     engine_mode: str
     question_type: str
     retrieval_strategy: str
+    evidence_plan: dict[str, Any] = Field(default_factory=dict)
     scoped_queries: list[str]
     recommended_paths: list[str]
     title_hits: list[CatalogHitResponse]
@@ -333,6 +367,44 @@ def engine_search_summaries(request: SearchRequest) -> SearchResponse:
     return SearchResponse(query=request.query, hits=_catalog_hits_response(hits))
 
 
+@app.post("/api/engine/search/sections")
+def engine_search_sections(request: ScopedSearchRequest) -> dict[str, Any]:
+    doc_ids = request.doc_ids[:]
+    if request.doc_id:
+        doc_ids.append(request.doc_id)
+    hits = search_sections(request.query, limit=max(1, min(request.limit, 20)), doc_ids=doc_ids or None)
+    return {"query": request.query, "hits": hits}
+
+
+@app.post("/api/engine/search/formulas")
+def engine_search_formulas(request: ScopedSearchRequest) -> dict[str, Any]:
+    doc_ids = request.doc_ids[:]
+    if request.doc_id:
+        doc_ids.append(request.doc_id)
+    hits = search_formulas(request.query, limit=max(1, min(request.limit, 20)), doc_ids=doc_ids or None)
+    return {"query": request.query, "hits": hits}
+
+
+@app.post("/api/engine/explain/formula")
+def engine_explain_formula(request: FormulaExplainRequest) -> dict[str, Any]:
+    if not request.query and not request.formula_id:
+        raise HTTPException(status_code=400, detail="query or formulaId is required.")
+    return explain_formula(query=request.query, formula_id=request.formula_id)
+
+
+@app.post("/api/engine/trace/relations")
+def engine_trace_relations(request: RelationTraceRequest) -> dict[str, Any]:
+    if not request.query and not request.doc_id:
+        raise HTTPException(status_code=400, detail="query or docId is required.")
+    return trace_relations(
+        doc_id=request.doc_id,
+        query=request.query,
+        direction=request.direction,
+        relation=request.relation,
+        limit=max(1, min(request.limit, 50)),
+    )
+
+
 @app.post("/api/engine/plan", response_model=EnginePlanResponse)
 def engine_plan(request: ChatRequest) -> EnginePlanResponse:
     question, _history = _extract_question_and_history(request.messages)
@@ -341,11 +413,24 @@ def engine_plan(request: ChatRequest) -> EnginePlanResponse:
         question=question,
         question_type=str(plan.get("question_type", "")),
         retrieval_strategy=str(plan.get("retrieval_strategy", "")),
+        evidence_plan=plan.get("evidence_plan", {}) if isinstance(plan.get("evidence_plan", {}), dict) else {},
         scoped_queries=[str(item) for item in plan.get("scoped_queries", [])],
         recommended_paths=[str(item) for item in plan.get("recommended_paths", [])],
         title_hits=_catalog_hits_response(plan.get("title_hits", [])),
         summary_hits=_catalog_hits_response(plan.get("summary_hits", [])),
     )
+
+
+@app.post("/api/engine/evidence")
+def engine_evidence(request: ChatRequest) -> dict[str, Any]:
+    question, _history = _extract_question_and_history(request.messages)
+    return collect_evidence(question)
+
+
+@app.post("/api/engine/answer")
+def engine_answer(request: ChatRequest) -> dict[str, Any]:
+    question, _history = _extract_question_and_history(request.messages)
+    return answer_verified(question)
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -408,6 +493,7 @@ def engine_chat(request: ChatRequest) -> EngineChatResponse:
         engine_mode=str(result.get("engine_mode", "professional")),
         question_type=str(plan.get("question_type", "")),
         retrieval_strategy=str(plan.get("retrieval_strategy", "")),
+        evidence_plan=plan.get("evidence_plan", {}) if isinstance(plan.get("evidence_plan", {}), dict) else {},
         scoped_queries=[str(item) for item in plan.get("scoped_queries", [])],
         recommended_paths=[str(item) for item in plan.get("recommended_paths", [])],
         title_hits=_catalog_hits_response(plan.get("title_hits", [])),

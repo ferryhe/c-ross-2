@@ -1,12 +1,12 @@
 {
-  "built_at": "2026-04-03T19:37:51.920243+00:00",
+  "built_at": "2026-04-13T05:22:15.588605+00:00",
   "source_root": "Knowledge_Base_MarkDown",
   "doc_count": 32,
   "alias_count": 162,
   "summary_count": 32,
   "section_count": 359,
   "formula_count": 161,
-  "relation_edge_count": 80,
+  "relation_edge_count": 241,
   "artifact_files": [
     "doc_catalog.jsonl",
     "title_aliases.jsonl",

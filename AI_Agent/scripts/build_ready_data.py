@@ -24,6 +24,7 @@ from build_index import (
     split_structured_sections,
     strip_front_matter,
 )
+from ready_data_tools import clean_formula_variables
 
 
 DEFAULT_SOURCE = REPO_ROOT / "Knowledge_Base_MarkDown"
@@ -432,27 +433,36 @@ def _mentions_attachments(text: str) -> list[str]:
 
 
 def _formula_variables(formula_text: str) -> list[str]:
-    patterns = [
-        re.compile(r"\\(?:mathrm|mathbf|text|mathit)\{([^{}]+)\}"),
-        re.compile(r"\\([A-Za-z]+)"),
-        re.compile(r"(?<!\\)\b([A-Za-z][A-Za-z0-9_]{0,30})\b"),
-    ]
-    values: list[str] = []
-    seen: set[str] = set()
-    for pattern in patterns:
-        for match in pattern.findall(formula_text):
-            token = str(match).strip()
-            if not token:
-                continue
-            token = token.replace("text", "").strip()
-            normalized = _normalize_text(token)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            values.append(token)
-            if len(values) >= 12:
-                return values
-    return values
+    return clean_formula_variables(formula_text)
+
+
+def _semantic_relation(source_category: str, target_kind: str, text: str) -> str:
+    if target_kind == "attachment":
+        if source_category == "rules":
+            return "requires_attachment"
+        if source_category == "notices":
+            return "applies_to_rule"
+        return "mentions_attachment"
+
+    normalized = text.replace(" ", "")
+    if source_category == "notices":
+        if any(marker in normalized for marker in ("调整", "优化", "差异化", "调节")):
+            return "adjusts_rule"
+        if any(marker in normalized for marker in ("延长", "过渡期", "实施")):
+            return "extends_transition"
+        if any(marker in normalized for marker in ("公式", "系数", "因子", "计量")):
+            return "clarifies_formula"
+        return "applies_to_rule"
+
+    if any(marker in normalized for marker in ("按照", "适用", "根据", "参照", "计量")):
+        return "applies_to_rule"
+    return "mentions_rule"
+
+
+def _relation_confidence(relation: str) -> float:
+    if relation in {"adjusts_rule", "extends_transition", "clarifies_formula", "applies_to_rule", "requires_attachment"}:
+        return 0.72
+    return 0.55
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -478,6 +488,7 @@ def build_ready_data(
 
     doc_nodes: list[dict] = []
     relation_edges: list[dict] = []
+    relation_candidates: list[dict] = []
 
     rule_targets: dict[str, str] = {}
     attachment_targets: dict[str, str] = {}
@@ -569,6 +580,7 @@ def build_ready_data(
 
         formula_count_for_doc = 0
         for index, section in enumerate(structured_sections, start=1):
+            section_id = f"{relative_path}#section-{index}"
             text = str(section["text"])
             section_heading = str(section.get("section_heading", doc_title))
             heading_path = _extract_heading_path(text)
@@ -583,7 +595,7 @@ def build_ready_data(
             section_keywords = _keywords(doc_title, heading_path, alias_values, plain_text)
 
             section_record = StructuredSectionRecord(
-                section_id=f"{relative_path}#section-{index}",
+                section_id=section_id,
                 doc_id=relative_path,
                 path=repo_relative_path,
                 title=doc_title,
@@ -602,6 +614,34 @@ def build_ready_data(
                 keywords=section_keywords,
             )
             sections_structured.append(asdict(section_record))
+            relation_candidates.extend(
+                {
+                    "source": relative_path,
+                    "source_category": category,
+                    "target_kind": "rule",
+                    "label": label,
+                    "target_number": label.removeprefix("规则第").removesuffix("号"),
+                    "evidence_section_id": section_id,
+                    "evidence_text_preview": _truncate(plain_text, 260),
+                    "effective_date": publish_date,
+                    "text": plain_text,
+                }
+                for label in mentions_rules
+            )
+            relation_candidates.extend(
+                {
+                    "source": relative_path,
+                    "source_category": category,
+                    "target_kind": "attachment",
+                    "label": label,
+                    "target_number": label.removeprefix("附件"),
+                    "evidence_section_id": section_id,
+                    "evidence_text_preview": _truncate(plain_text, 260),
+                    "effective_date": publish_date,
+                    "text": plain_text,
+                }
+                for label in mentions_attachments
+            )
 
             for formula_match in MATH_BLOCK_PATTERN.finditer(plain_text):
                 formula_body = formula_match.group(0).strip()
@@ -626,42 +666,49 @@ def build_ready_data(
                     )
                 )
 
-    for doc in raw_docs:
-        body = str(doc["body"])
-        doc_id = str(doc["doc_id"])
-        seen_edges: set[tuple[str, str, str]] = set()
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    for candidate in relation_candidates:
+        source_doc_id = str(candidate["source"])
+        target_number = str(candidate["target_number"])
+        target_kind = str(candidate["target_kind"])
+        if target_kind == "rule":
+            target = rule_targets.get(target_number)
+            fallback_relation = "mentions_rule"
+        else:
+            target = attachment_targets.get(target_number)
+            fallback_relation = "mentions_attachment"
+        if not target or target == source_doc_id:
+            continue
 
-        for rule_number in RULE_REF_PATTERN.findall(body):
-            target = rule_targets.get(rule_number)
-            if not target or target == doc_id:
-                continue
-            edge = (doc_id, target, "mentions_rule")
-            if edge in seen_edges:
-                continue
-            seen_edges.add(edge)
-            relation_edges.append(
-                {
-                    "source": doc_id,
-                    "target": target,
-                    "relation": "mentions_rule",
-                    "label": f"规则第{rule_number}号",
-                }
+        semantic_relation = _semantic_relation(
+            str(candidate["source_category"]),
+            target_kind,
+            str(candidate["text"]),
+        )
+        relations_to_add = [fallback_relation]
+        if semantic_relation != fallback_relation:
+            relations_to_add.append(semantic_relation)
+
+        for relation in relations_to_add:
+            edge = (
+                source_doc_id,
+                target,
+                relation,
+                str(candidate["evidence_section_id"]),
             )
-
-        for attachment_number in ATTACHMENT_REF_PATTERN.findall(body):
-            target = attachment_targets.get(attachment_number)
-            if not target or target == doc_id:
-                continue
-            edge = (doc_id, target, "mentions_attachment")
             if edge in seen_edges:
                 continue
             seen_edges.add(edge)
             relation_edges.append(
                 {
-                    "source": doc_id,
+                    "source": source_doc_id,
                     "target": target,
-                    "relation": "mentions_attachment",
-                    "label": f"附件{attachment_number}",
+                    "relation": relation,
+                    "label": str(candidate["label"]),
+                    "evidence_section_id": str(candidate["evidence_section_id"]),
+                    "evidence_text_preview": str(candidate["evidence_text_preview"]),
+                    "effective_date": str(candidate["effective_date"]),
+                    "confidence": _relation_confidence(relation),
                 }
             )
 
