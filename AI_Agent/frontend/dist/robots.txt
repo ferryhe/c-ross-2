@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /healthz
+Disallow: /docs
+Disallow: /redoc
+Disallow: /openapi.json
+Sitemap: https://cross.aiactuary.cn/sitemap.xml
