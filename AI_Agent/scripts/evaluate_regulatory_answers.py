@@ -20,7 +20,7 @@ from scripts.project_config import load_project_env
 from scripts.regulatory_engine import run_regulatory_query
 
 
-DEFAULT_MODEL = "gpt-5.4-mini"
+DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "eval"
 DEFAULT_CASES = (
     {

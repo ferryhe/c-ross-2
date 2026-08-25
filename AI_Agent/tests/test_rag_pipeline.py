@@ -30,6 +30,46 @@ def _vectorize(text: str) -> list[float]:
     return [base, base + 1.0, base + 2.0, base + 3.0]
 
 
+class TestChatCompletionParameters:
+    @staticmethod
+    def _client(captured: dict) -> SimpleNamespace:
+        def create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            )
+
+        return SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+
+    def test_gpt5_omits_unsupported_temperature(self):
+        captured: dict = {}
+
+        result = ask_module._create_chat_completion(
+            self._client(captured),
+            [{"role": "user", "content": "test"}],
+            temperature=0.2,
+            model="gpt-5.6-luna",
+        )
+
+        assert result == "ok"
+        assert captured["model"] == "gpt-5.6-luna"
+        assert "temperature" not in captured
+
+    def test_non_gpt5_preserves_temperature(self):
+        captured: dict = {}
+
+        ask_module._create_chat_completion(
+            self._client(captured),
+            [{"role": "user", "content": "test"}],
+            temperature=0.2,
+            model="gpt-4.1",
+        )
+
+        assert captured["temperature"] == 0.2
+
+
 class TestFileValidation:
     """Test file content validation."""
     
