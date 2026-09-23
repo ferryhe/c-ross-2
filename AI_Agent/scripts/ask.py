@@ -33,8 +33,12 @@ ANSWER_SKILL_PATH = REPO_ROOT / "skills" / "regulatory-markdown-answering" / "SK
 
 load_project_env(PROJECT_ROOT)
 
-MODEL = os.getenv("MODEL", "gpt-5.6-luna")
+MODEL = os.getenv("MODEL", "gpt-6-luna")
 EMB_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
+
+# Model families that lock `temperature` to the default (1); sending any other
+# value is rejected with a 400, so those requests must omit the parameter.
+FIXED_TEMPERATURE_MODEL_PREFIXES = ("gpt-5", "gpt-6")
 DEFAULT_MODE = os.getenv("RAG_MODE", "agentic")
 DEFAULT_TOP_K = int(os.getenv("TOP_K", "4"))
 DEFAULT_SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.0"))
@@ -646,7 +650,7 @@ def _create_chat_completion(
         "model": resolved_model,
         "messages": messages,
     }
-    if not resolved_model.strip().lower().split("/")[-1].startswith("gpt-5"):
+    if not resolved_model.strip().lower().split("/")[-1].startswith(FIXED_TEMPERATURE_MODEL_PREFIXES):
         request_kwargs["temperature"] = temperature
     response = client.chat.completions.create(**request_kwargs)
     return response.choices[0].message.content
